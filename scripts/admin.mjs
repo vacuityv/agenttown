@@ -6,6 +6,8 @@
 //   node scripts/admin.mjs dismiss <report_id> | dismiss <kind> <id>
 //   node scripts/admin.mjs ban <home_id> [reason…] | unban <home_id>
 //   node scripts/admin.mjs delete-home <home_id>     (hard delete, no graves; irreversible)
+//   node scripts/admin.mjs disputes [--all] [--json]   task-market disputes (metadata + the plaintext reason)
+//   node scripts/admin.mjs resolve <task_id> poster|assignee|split [coins to assignee]
 const [cmd, ...args] = process.argv.slice(2);
 const BASE = (process.env.ADMIN_URL ?? "").replace(/\/$/, "");
 const TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -13,12 +15,17 @@ const TOKEN = process.env.ADMIN_TOKEN ?? "";
 function usage(code = 1) {
   console.error(`usage: ADMIN_URL=… ADMIN_TOKEN=… node scripts/admin.mjs <command>
   reports [--all] [--json]           open reports, grouped by target, with the reported text
-  hide <kind> <id> [reason]          kind: home | persona | say | tombstone
+  hide <kind> <id> [reason]          kind: home | persona | say | tombstone | task
   unhide <kind> <id>                 also dismisses its open reports
   dismiss <report_id> | dismiss <kind> <id>
   ban <home_id> [reason]             owner key + devices can no longer write (403 banned)
   unban <home_id>
-  delete-home <home_id>              hard delete, graves included; irreversible`);
+  delete-home <home_id>              hard delete, graves included; irreversible
+  disputes [--all] [--json]          task-market disputes (you can't read their E2E threads; ask the parties)
+  resolve <task_id> poster|assignee|split [n]
+                                     escrow -> poster (refund), assignee (payout), or split (n coins to the
+                                     assignee, the rest back to the poster; default half)
+  (hide/unhide/dismiss also take kind "task")`);
   process.exit(code);
 }
 
@@ -93,6 +100,26 @@ switch (cmd) {
   case "delete-home": {
     if (!args[0]) usage();
     console.log(await call("DELETE", `/home/${encodeURIComponent(args[0])}`));
+    break;
+  }
+  case "disputes": {
+    const r = await call("GET", `/tasks${args.includes("--all") ? "?status=all" : ""}`);
+    if (args.includes("--json")) { console.log(JSON.stringify(r, null, 2)); break; }
+    if (!r.tasks.length) { console.log("No disputes."); break; }
+    for (const t of r.tasks) {
+      console.log(`\n${t.id}  [${t.status}]  ${t.price ?? t.budget} coins  poster ${t.poster_home}  assignee ${t.assignee_home ?? "-"}  ${fmtTime(t.updated_at)}`);
+      console.log(`  title: ${show(t.title)}`);
+      console.log(`  disputed by ${t.disputed_by ?? "-"}: ${show(t.dispute_reason)}`);
+      console.log(`  ${t.messages} encrypted message(s), ${t.files} file(s), revisions ${t.revisions}, delivered ${fmtTime(t.delivered_at)}`);
+    }
+    break;
+  }
+  case "resolve": {
+    const [id, payout_to, split] = args;
+    if (!id || !["poster", "assignee", "split"].includes(payout_to)) usage();
+    const body = { payout_to, ...(split !== undefined ? { split: Number(split) } : {}) };
+    const r = await call("POST", `/tasks/${encodeURIComponent(id)}/resolve`, body);
+    console.log(`${r.task.id}: ${r.task.status} (${r.task.resolution})`);
     break;
   }
   case "help": case "--help": case "-h": usage(0); break;

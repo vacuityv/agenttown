@@ -2,6 +2,7 @@ import { db, tx, all, one, run, type Q, type Row } from "./db.ts";
 import { bus, type BusEvent } from "./bus.ts";
 import { LIMITS } from "./config.ts";
 import { ApiError, newId } from "./util.ts";
+import * as market from "./market-core.ts";
 
 export const STATUSES = ["thinking", "tool", "waiting", "idle", "ended"] as const;
 export type Status = (typeof STATUSES)[number];
@@ -11,7 +12,8 @@ const day = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 const sql = {
   homeByAuth: "SELECT id, slot, name, created_at, dwelling, style, description FROM homes WHERE auth_hash = ?",
-  homeById: "SELECT id, slot, name, created_at, dwelling, style, description, look, art, art_status, art_error FROM homes WHERE id = ?",
+  homeById: `SELECT id, slot, name, created_at, dwelling, style, description, look, art, art_status, art_error,
+    box_pub, rep_posted, rep_done, rep_rating_sum, rep_rating_n FROM homes WHERE id = ?`,
   insertHome: "INSERT INTO homes (id, auth_hash, name, created_at) VALUES (?, ?, ?, ?)",
   renameHome: "UPDATE homes SET name = ? WHERE id = ?",
   // LAST_INSERT_ID(expr) hands the new value back in the OK packet (insertId) of this very statement.
@@ -68,6 +70,8 @@ export const publicHome = (h: Row) => ({
   id: h.id, slot: h.slot, name: h.name, created_at: h.created_at, dwelling: h.dwelling ?? null,
   style: h.style ?? null, description: h.description ?? null,
   ...publicLook(h),
+  // task market: E2E box public key and public reputation (docs/protocol.md "Task market")
+  box_pub: h.box_pub ?? null, rep: market.publicRep(h),
 });
 
 // Dwelling art (docs/protocol.md "Dwelling art v1"); a separate helper so other publicHome fields merge cleanly.
@@ -150,8 +154,14 @@ function scheduleCounts(homeId: string) {
 
 export async function createHome(authHash: string, name: string) {
   const id = newId("h", 8);
+  const fx = market.effects();
   try {
-    await run(db(), sql.insertHome, [id, authHash, name, Date.now()]);
+    await tx(async (c) => {
+      market.resetEffects(fx);
+      const now = Date.now();
+      await run(c, sql.insertHome, [id, authHash, name, now]);
+      await market.grantStart(c, id, now, fx); // every home starts with 100 coins (ledger: grant)
+    });
   } catch (e: any) {
     if (e?.code === "ER_DUP_ENTRY") throw new ApiError(409, "already_registered", "This key is already registered. Use `agenttown login` instead.");
     throw e;
@@ -311,6 +321,7 @@ export async function town(homeIds: string[]) {
 
 const worldSql = `
   SELECT h.id, h.slot, h.name, h.created_at, h.dwelling, h.style, h.description,
+    h.box_pub, h.rep_posted, h.rep_done, h.rep_rating_sum, h.rep_rating_n,
     COUNT(s.id) AS open,
     COALESCE(SUM(s.status IN ('thinking', 'tool')), 0) AS busy
   FROM homes h LEFT JOIN sessions s ON s.home_id = h.id AND s.ended_at IS NULL
@@ -321,7 +332,9 @@ const totalsSql = `
     (SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL AND status IN ('thinking', 'tool')) AS busy`;
 
 export async function world(limit: number, offset: number) {
-  const [totals, homes] = await Promise.all([one(db(), totalsSql), all(db(), worldSql, [limit, offset])]);
+  const [totals, rows] = await Promise.all([one(db(), totalsSql), all(db(), worldSql, [limit, offset])]);
+  const homes = rows.map(({ rep_posted, rep_done, rep_rating_sum, rep_rating_n, ...h }) =>
+    ({ ...h, box_pub: h.box_pub ?? null, rep: market.publicRep({ rep_posted, rep_done, rep_rating_sum, rep_rating_n }) }));
   return { totals, homes };
 }
 
@@ -494,10 +507,13 @@ export async function retirePersona(homeId: string, ref: { id?: string; name?: s
 
 /** Buries every persona (or the home itself if empty) and deletes the home and everything under it. */
 export async function deleteHome(homeId: string, epitaph: string | null) {
+  const fx = market.effects();
   const stones = await tx(async (c) => {
+    market.resetEffects(fx);
     const home = await one(c, "SELECT * FROM homes WHERE id = ? FOR UPDATE", [homeId]);
     if (!home) throw new ApiError(404, "not_found", "No such home.");
     const now = Date.now();
+    await market.leaveMarket(c, homeId, now, fx); // open tasks cancelled, escrow settled, coins vanish
     const personas = await all(c, "SELECT * FROM personas WHERE home_id = ? ORDER BY created_at", [homeId]);
     const out = [];
     for (const p of personas.length ? personas : [null]) out.push(await bury(c, home, p, now, epitaph));
@@ -512,6 +528,7 @@ export async function deleteHome(homeId: string, epitaph: string | null) {
   countsPending.delete(homeId);
   for (const t of stones) bus.emit({ type: "tombstone", home_id: homeId, data: t });
   bus.emit({ type: "home_removed", home_id: homeId, data: {} });
+  await market.emitEffects(fx);
   return stones;
 }
 
@@ -625,7 +642,9 @@ const mergeStatsSql = [
 ];
 
 export async function mergeHomes(inviteId: string, bId: string, rekeyBlob: string, onConflict: "merge" | "rename") {
+  const fx = market.effects();
   const result = await tx(async (c) => {
+    market.resetEffects(fx);
     const inv = await one(c, devSql.inviteForUpdate, [inviteId]);
     const now = Date.now();
     if (!inv || inv.kind !== "merge") throw new ApiError(404, "invite_not_found", "No such merge invite.");
@@ -637,6 +656,7 @@ export async function mergeHomes(inviteId: string, bId: string, rekeyBlob: strin
     const locked = await all(c, "SELECT * FROM homes WHERE id IN (?, ?) ORDER BY id FOR UPDATE", [aId, bId]);
     const A = locked.find((h) => h.id === aId), B = locked.find((h) => h.id === bId);
     if (!A || !B) throw new ApiError(404, "not_found", "Home not found.");
+    await market.mergeMarket(c, aId, bId, now, fx); // coins + reputation summed; 409 while B has escrowed work
 
     const aPersonas = await all(c, "SELECT * FROM personas WHERE home_id = ? FOR UPDATE", [aId]);
     const bPersonas = await all(c, "SELECT * FROM personas WHERE home_id = ? ORDER BY created_at FOR UPDATE", [bId]);
@@ -699,6 +719,7 @@ export async function mergeHomes(inviteId: string, bId: string, rekeyBlob: strin
   bus.emit({ type: "home", home_id: home.id, data: home });
   for (const p of result.personas) bus.emit({ type: "persona", home_id: home.id, data: p });
   scheduleCounts(home.id);
+  await market.emitEffects(fx);
   return { home, merged_from: result.B.id, personas: result.outcomes, device_id: result.ownerDevice };
 }
 

@@ -12,7 +12,12 @@ export type BusEvent =
   | { type: "home_removed"; home_id: string; data: unknown }
   // moderation (server/safety.ts)
   | { type: "say_removed"; home_id: string; data: unknown }
-  | { type: "tombstone_update"; home_id: string; data: unknown };
+  | { type: "tombstone_update"; home_id: string; data: unknown }
+  // task market (server/market-core.ts). `task`: town feed + home streams of poster and assignee (home_id = poster);
+  // `task_message` / `wallet`: home streams only (no contents, ever).
+  | { type: "task"; home_id: string; data: unknown }
+  | { type: "task_message"; home_id: string; data: unknown }
+  | { type: "wallet"; home_id: string; data: unknown };
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(0);

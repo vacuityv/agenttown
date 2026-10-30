@@ -13,6 +13,8 @@ import { initDb } from "./db.ts";
 import { apiRateLimit, clientIp, securityHeaders, sseAcquire } from "./hardening.ts";
 import { assertAllowed } from "./moderation.ts";
 import * as safety from "./safety.ts";
+import * as market from "./market.ts";
+import { MARKET } from "./config.ts";
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
 } from "./util.ts";
@@ -91,7 +93,20 @@ function optText(v: unknown, max: number, code: string): string | null | undefin
 
 const api = new Hono<Env>();
 api.use("*", apiRateLimit); // generous per-IP limit across /v1 (server/hardening.ts)
-api.use("*", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) }));
+// Request bodies <= 16 KB, except the task market's E2E payloads: encrypted files (raw, <= 2 MB) and encrypted
+// messages / bid notes / deliveries / revisions (<= 32 KB of ciphertext, so the JSON can be a bit larger).
+const tooLarge = (c: Context) => c.json({ error: "too_large", message: "Request body too large." }, 413);
+const smallBody = bodyLimit({ maxSize: 16 * 1024, onError: tooLarge });
+const fileBody = bodyLimit({ maxSize: MARKET.fileMax, onError: tooLarge });
+const encBody = bodyLimit({ maxSize: MARKET.bodyMax + 8 * 1024, onError: tooLarge });
+const FILE_PATH_RE = /\/tasks\/[^/]+\/files$/;
+const ENC_PATH_RE = /\/tasks\/[^/]+\/(messages|bids|deliver|revise)$/;
+api.use("*", (c, next) => {
+  const p = c.req.path;
+  if (FILE_PATH_RE.test(p)) return fileBody(c, next);
+  if (ENC_PATH_RE.test(p)) return encBody(c, next);
+  return smallBody(c, next);
+});
 
 // ---- registration ----
 
@@ -383,8 +398,12 @@ api.get("/stream", (c) => {
     const queue: BusEvent[] = [];
     let wake: (() => void) | null = null;
     const off = bus.on((e) => {
-      // Home stream: everything about that home. Town stream: homes, counts, agent positions, looks.
-      if (only ? e.home_id !== only || e.type === "counts" || e.type === "agent" : e.type === "session") return;
+      // Home stream: everything about that home (a `task` also reaches its assignee's stream). Town stream: homes,
+      // counts, agent positions, looks, public task updates - never task_message / wallet.
+      if (only) {
+        const mine = e.home_id === only || (e.type === "task" && (e.data as any)?.assignee_home === only);
+        if (!mine || e.type === "counts" || e.type === "agent") return;
+      } else if (e.type === "session" || e.type === "task_message" || e.type === "wallet") return;
       const r = safety.redactEvent(e); // moderation: hidden content is redacted or dropped
       if (!r) return;
       queue.push(r);
@@ -412,6 +431,7 @@ api.get("/stream", (c) => {
 });
 
 safety.mountSafety(api); // POST /v1/reports, /v1/admin/* (server/safety.ts)
+market.mountMarket(api, requireAuth); // task market: /v1/tasks..., /v1/wallet, /v1/inbox, /v1/home/box-key (server/market.ts)
 app.route("/v1", api);
 
 // ---- static: agents.md and the CLI get the public URL baked in ----
@@ -427,6 +447,9 @@ app.get("/cli/agenttown-mcp.mjs", templated("../plugins/mcp/agenttown-mcp.mjs", 
 // Unversioned assets: make browsers (and Cloudflare) revalidate so a deploy never leaves a page half-updated.
 const revalidate = (_path: string, c: Context) => { c.header("cache-control", "no-cache"); };
 app.get("/h/:id", serveStatic({ path: "./public/index.html", onFound: revalidate }));
+// Task board client routes (the UI renders them; reloads and shared links must work).
+app.get("/tasks", serveStatic({ path: "./public/index.html", onFound: revalidate }));
+app.get("/tasks/:id", serveStatic({ path: "./public/index.html", onFound: revalidate }));
 app.use("/*", serveStatic({ root: "./public", onFound: revalidate }));
 
 setInterval(() => {
@@ -442,5 +465,6 @@ try {
 }
 
 startAvatarWorker();
+market.startMarketSweeper();
 
 serve({ fetch: app.fetch, port: PORT }, () => console.log(`agenttown listening on :${PORT} (${PUBLIC_URL})`));

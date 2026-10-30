@@ -9,17 +9,19 @@ import { SERVER_SECRET } from "./config.ts";
 import { bus, type BusEvent } from "./bus.ts";
 import { db, tx, all, one, run, type Row } from "./db.ts";
 import * as store from "./store.ts";
+import * as market from "./market-core.ts";
 import { clientIp } from "./hardening.ts";
 import { ApiError, allow, cleanText } from "./util.ts";
 
-export const KINDS = ["home", "persona", "say", "tombstone"] as const;
+export const KINDS = ["home", "persona", "say", "tombstone", "task"] as const;
 export type Kind = (typeof KINDS)[number];
 export const REASONS = ["spam", "hate", "harassment", "sexual", "personal_info", "other"] as const;
 export const HIDDEN_NAME = "(hidden)";
 
-const TABLE: Record<Kind, string> = { home: "homes", persona: "personas", say: "says", tombstone: "tombstones" };
+const TABLE: Record<Kind, string> = { home: "homes", persona: "personas", say: "says", tombstone: "tombstones", task: "tasks" };
 const ID_RE: Record<Kind, RegExp> = {
   home: /^h_[0-9a-z]{4,16}$/, persona: /^p_[0-9a-z]{4,16}$/, say: /^[1-9]\d{0,18}$/, tombstone: /^t_[0-9a-z]{4,16}$/,
+  task: /^tk_[0-9a-z]{10}$/,
 };
 const AUTO_HIDE_REPORTS = Number(process.env.AUTO_HIDE_REPORTS) || 3;
 const AUTO_HIDE_WINDOW_MS = 24 * 3600_000;
@@ -30,7 +32,7 @@ function limit(key: string, perSec: number, burst: number) {
 
 // ---- in-memory caches ----
 
-const hidden: Record<Kind, Map<string, string>> = { home: new Map(), persona: new Map(), say: new Map(), tombstone: new Map() };
+const hidden: Record<Kind, Map<string, string>> = { home: new Map(), persona: new Map(), say: new Map(), tombstone: new Map(), task: new Map() };
 const bannedHashes = new Set<string>();
 const bannedHomes = new Set<string>();
 
@@ -103,6 +105,15 @@ export function redactTombstone<T extends Record<string, any>>(t: T): T {
   return out as T;
 }
 
+/** Task market: a hidden task keeps its metadata (status, coins, homes) but loses its title, summary and review. */
+export function redactTask<T extends Record<string, any>>(t: T): T {
+  if (!t || !hidden.task.has(t.id)) return t;
+  const out: Record<string, any> = { ...t, title: HIDDEN_NAME, hidden: true };
+  if ("summary" in out) out.summary = null;
+  if ("review" in out) out.review = null;
+  return out as T;
+}
+
 /** A /town entry: home + personas + says. */
 export const redactTownHome = (h: Record<string, any>) => ({
   ...redactHome(h),
@@ -118,6 +129,7 @@ export function redactEvent(e: BusEvent): BusEvent | null {
     case "say": return sayVisible(e.home_id, e.data as Row) ? e : null;
     case "tombstone":
     case "tombstone_update": return { ...e, data: redactTombstone(e.data as Row) };
+    case "task": return { ...e, data: redactTask(e.data as Row) };
     default: return e;
   }
 }
@@ -147,6 +159,9 @@ async function announce(kind: Kind, row: Row, hiding: boolean) {
       break;
     case "tombstone":
       bus.emit({ type: "tombstone_update", home_id: row.home_id, data: store.publicTombstone(row) });
+      break;
+    case "task":
+      bus.emit({ type: "task", home_id: row.poster_home, data: market.taskEvent(row) });
       break;
   }
 }
@@ -179,7 +194,7 @@ const reporterHash = (ip: string) => createHmac("sha256", SERVER_SECRET).update(
 export async function fileReport(ip: string, kind: Kind, id: string, reason: string, note: string | null) {
   const row = await targetRow(kind, id);
   if (!row) throw new ApiError(404, "not_found", `No such ${kind}.`);
-  const homeId = kind === "home" ? row.id : row.home_id;
+  const homeId = kind === "home" ? row.id : kind === "task" ? row.poster_home : row.home_id;
   const now = Date.now();
   await run(db(), `INSERT IGNORE INTO reports (kind, target_id, home_id, reporter_hash, reason, note, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)`, [kind, String(id), homeId, reporterHash(ip), reason, note, now]);
@@ -202,6 +217,9 @@ function contentOf(kind: Kind, r: Row | undefined) {
     case "say": return { id: String(r.id), home_id: r.home_id, persona_id: r.persona_id, text: r.text, ts: r.ts, ...base };
     case "tombstone": return {
       id: r.id, home_id: r.home_id, name: r.name, home_name: r.home_name, appearance: r.appearance, epitaph: r.epitaph, ...base,
+    };
+    case "task": return {
+      id: r.id, home_id: r.poster_home, title: r.title, summary: r.summary, review: r.review, status: r.status, ...base,
     };
   }
 }
@@ -249,9 +267,12 @@ export async function unban(homeId: string) {
 
 /** Abuse removal: deletes the home and everything under it, its graves included, without creating new graves. */
 export async function hardDeleteHome(homeId: string) {
+  const fx = market.effects();
   const graves = await tx(async (c) => {
+    market.resetEffects(fx);
     const home = await one(c, "SELECT id FROM homes WHERE id = ? FOR UPDATE", [homeId]);
     if (!home) throw new ApiError(404, "not_found", "No such home.");
+    await market.leaveMarket(c, homeId, Date.now(), fx); // open tasks cancelled, escrow settled
     for (const t of ["events", "daily_stats", "tool_stats", "avatar_usage"]) await run(c, `DELETE FROM ${t} WHERE home_id = ?`, [homeId]);
     const g = await run(c, "DELETE FROM tombstones WHERE home_id = ?", [homeId]);
     await run(c, "DELETE FROM homes WHERE id = ?", [homeId]); // cascades personas, sessions, says, invites, devices
@@ -259,6 +280,7 @@ export async function hardDeleteHome(homeId: string) {
     return g.affectedRows;
   });
   bus.emit({ type: "home_removed", home_id: homeId, data: { removed: true } });
+  await market.emitEffects(fx);
   return { deleted: homeId, tombstones_deleted: graves };
 }
 
@@ -269,7 +291,7 @@ if (ADMIN_TOKEN && ADMIN_TOKEN.length < 32) console.error("ADMIN_TOKEN is shorte
 const adminEnabled = ADMIN_TOKEN.length >= 32;
 const adminDigest = createHash("sha256").update(ADMIN_TOKEN).digest();
 
-async function requireAdmin(c: Context, next: Next) {
+export async function requireAdmin(c: Context, next: Next) {
   if (!adminEnabled) throw new ApiError(404, "not_found", "Not found.");
   const got = c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   const ok = timingSafeEqual(createHash("sha256").update(got).digest(), adminDigest);

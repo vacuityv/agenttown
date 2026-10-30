@@ -24,3 +24,28 @@ export const LIMITS = {
 
 // Device invites: single use, short-lived (overridable for tests).
 export const INVITE_TTL_MS = Number(process.env.INVITE_TTL_MS ?? 15 * 60_000);
+
+// ---- task market (server/market.ts) ----
+// End-to-end encrypted task files (ciphertext only) live here; production: /opt/agenttown/data/files.
+export const FILES_DIR = process.env.FILES_DIR ?? "data/files";
+const envMs = (k: string, d: number) => {
+  const v = Number(process.env[k]);
+  return Number.isFinite(v) && v > 0 ? v : d;
+};
+export const MARKET = {
+  startCoins: 100,
+  autoCompleteMs: 72 * 3600_000, // poster silent this long after a delivery ⇒ completed, assignee paid
+  noDeadlineCancelMs: 7 * 24 * 3600_000, // no deadline_at: the poster may cancel alone this long after assignment
+  openExpiryMs: 30 * 24 * 3600_000, // open tasks without a deadline expire (cancelled) after this
+  fileRetentionMs: 30 * 24 * 3600_000, // files are deleted this long after the task closes
+  inboxRetentionMs: 30 * 24 * 3600_000,
+  sweepMs: envMs("MARKET_SWEEP_MS", 60_000),
+  fileMax: 2 * 1024 * 1024, // one encrypted file
+  taskFilesMax: 20 * 1024 * 1024, // all files of one task
+  bodyMax: 32 * 1024, // one E2E message / bid note / delivery (ciphertext chars)
+  tasksPerDay: 10,
+  openTasksPerHome: 5,
+  bidsPerDay: 50,
+  maxRevisions: 3,
+  maxCoins: 1_000_000_000,
+};

@@ -278,6 +278,120 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
     ],
   },
   // ---- end moderation ----
+  // ---- task market (server/market.ts, server/market-core.ts). Versions >= 300. ----
+  {
+    version: 300,
+    statements: [
+      // coins: virtual, never negative, changed only together with a coin_ledger row (same transaction).
+      // box_pub: the home's X25519 public key for end-to-end encrypted task messages/files (base64url, 32 bytes).
+      // rep_*: public reputation counters. inbox_read: last inbox item id the home has read.
+      `ALTER TABLE homes
+        ADD COLUMN coins          BIGINT      NOT NULL DEFAULT 0,
+        ADD COLUMN box_pub        VARCHAR(64) NULL,
+        ADD COLUMN rep_posted     INT         NOT NULL DEFAULT 0,
+        ADD COLUMN rep_done       INT         NOT NULL DEFAULT 0,
+        ADD COLUMN rep_rating_sum INT         NOT NULL DEFAULT 0,
+        ADD COLUMN rep_rating_n   INT         NOT NULL DEFAULT 0,
+        ADD COLUMN inbox_read     BIGINT      NOT NULL DEFAULT 0,
+        ADD CONSTRAINT homes_coins_nonneg CHECK (coins >= 0)`,
+      // No foreign keys: rows of a home that left are deleted explicitly (its coins vanish).
+      `CREATE TABLE IF NOT EXISTS coin_ledger (
+        id      BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        home_id VARCHAR(32) NOT NULL,
+        delta   BIGINT      NOT NULL,
+        reason  VARCHAR(16) NOT NULL,              -- grant | escrow | release | refund | payout | admin
+        task_id VARCHAR(32) NULL,
+        ts      BIGINT      NOT NULL,
+        KEY coin_ledger_home (home_id, id)
+      ) ${T}`,
+      `INSERT INTO coin_ledger (home_id, delta, reason, task_id, ts) SELECT id, 100, 'grant', NULL, ${Date.now()} FROM homes`,
+      "UPDATE homes SET coins = coins + 100",
+      // Tasks outlive their homes (history, reputation): no foreign keys on homes.
+      `CREATE TABLE IF NOT EXISTS tasks (
+        id             VARCHAR(32)   NOT NULL PRIMARY KEY,
+        poster_home    VARCHAR(32)   NOT NULL,
+        assignee_home  VARCHAR(32)   NULL,
+        title          VARCHAR(400)  NOT NULL,     -- public, <= 100 chars, moderated
+        summary        VARCHAR(4000) NOT NULL,     -- public, <= 1000 chars, moderated
+        tags           VARCHAR(255)  NOT NULL DEFAULT '',  -- comma-separated slugs
+        budget         BIGINT        NOT NULL,
+        price          BIGINT        NULL,         -- accepted bid price = coins in escrow while assigned
+        accepted_bid   VARCHAR(32)   NULL,
+        status         VARCHAR(16)   NOT NULL,     -- open | assigned | delivered | completed | cancelled | disputed
+        bids_count     INT           NOT NULL DEFAULT 0,  -- bids with status active or accepted
+        revisions      INT           NOT NULL DEFAULT 0,
+        rating         TINYINT       NULL,
+        review         VARCHAR(800)  NULL,         -- public, <= 200 chars, moderated
+        resolution     VARCHAR(32)   NULL,         -- admin dispute outcome: poster | assignee | split:<n>
+        cancel_requested_at BIGINT   NULL,         -- poster asked the assignee to release
+        disputed_by    VARCHAR(32)   NULL,
+        dispute_reason VARCHAR(2000) NULL,         -- parties + admins only
+        created_at     BIGINT        NOT NULL,
+        updated_at     BIGINT        NOT NULL,
+        deadline_at    BIGINT        NULL,
+        assigned_at    BIGINT        NULL,
+        delivered_at   BIGINT        NULL,
+        closed_at      BIGINT        NULL,
+        files_purged   TINYINT       NOT NULL DEFAULT 0,
+        hidden_at      BIGINT        NULL,
+        hidden_reason  VARCHAR(255)  NULL,
+        KEY tasks_status (status, created_at),
+        KEY tasks_poster (poster_home, created_at),
+        KEY tasks_assignee (assignee_home, created_at),
+        KEY tasks_delivered (status, delivered_at),
+        KEY tasks_closed (closed_at)
+      ) ${T}`,
+      `CREATE TABLE IF NOT EXISTS task_bids (
+        id          VARCHAR(32) NOT NULL PRIMARY KEY,
+        task_id     VARCHAR(32) NOT NULL,
+        bidder_home VARCHAR(32) NOT NULL,
+        price       BIGINT      NOT NULL,          -- public
+        status      VARCHAR(16) NOT NULL,          -- active | withdrawn | declined | accepted
+        created_at  BIGINT      NOT NULL,
+        updated_at  BIGINT      NOT NULL,
+        UNIQUE KEY task_bids_one (task_id, bidder_home),
+        KEY task_bids_bidder (bidder_home),
+        CONSTRAINT task_bids_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      ) ${T}`,
+      // One thread per (task, counterpart): thread_home is the non-poster side. body_enc is E2E ciphertext.
+      `CREATE TABLE IF NOT EXISTS task_messages (
+        id          BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        task_id     VARCHAR(32) NOT NULL,
+        thread_home VARCHAR(32) NOT NULL,
+        from_home   VARCHAR(32) NOT NULL,
+        to_home     VARCHAR(32) NOT NULL,
+        kind        VARCHAR(16) NOT NULL,          -- message | bid | delivery | revision
+        body_enc    MEDIUMTEXT  NOT NULL,
+        attachments VARCHAR(1024) NOT NULL DEFAULT '',  -- comma-separated file ids
+        ts          BIGINT      NOT NULL,
+        KEY task_messages_thread (task_id, thread_home, id),
+        CONSTRAINT task_messages_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      ) ${T}`,
+      `CREATE TABLE IF NOT EXISTS task_files (
+        id            VARCHAR(32) NOT NULL PRIMARY KEY,
+        task_id       VARCHAR(32) NOT NULL,
+        uploader_home VARCHAR(32) NOT NULL,
+        to_home       VARCHAR(32) NOT NULL,
+        size          INT         NOT NULL,
+        sha256        CHAR(64)    NOT NULL,        -- of the ciphertext
+        created_at    BIGINT      NOT NULL,
+        KEY task_files_task (task_id),
+        CONSTRAINT task_files_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
+      ) ${T}`,
+      // Inbox items: metadata only (never message contents).
+      `CREATE TABLE IF NOT EXISTS task_inbox (
+        id        BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        home_id   VARCHAR(32) NOT NULL,
+        kind      VARCHAR(24) NOT NULL,
+        task_id   VARCHAR(32) NOT NULL,
+        from_home VARCHAR(32) NULL,
+        ts        BIGINT      NOT NULL,
+        KEY task_inbox_home (home_id, id),
+        KEY task_inbox_ts (ts)
+      ) ${T}`,
+    ],
+  },
+  // ---- end task market ----
 ];
 
 export async function initDb() {

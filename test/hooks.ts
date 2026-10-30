@@ -211,7 +211,7 @@ try {
   const replies = mcpOut.trim().split("\n").map((l) => JSON.parse(l));
   assert.equal(replies.length, 6, "no reply to notifications");
   assert.equal(replies[0].result.serverInfo.name, "agenttown");
-  assert.deepEqual(replies[1].result.tools.map((t: any) => t.name), ["agenttown_report", "agenttown_whoami"]);
+  assert.deepEqual(replies[1].result.tools.map((t: any) => t.name).slice(0, 2), ["agenttown_report", "agenttown_whoami"]);
   assert.match(replies[2].result.content[0].text, /^ok \(task #\d+\)/);
   assert.equal(JSON.parse(replies[4].result.content[0].text).home.id, cfg.home_id);
   assert.equal(replies[5].error.code, -32601);
