@@ -484,12 +484,12 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   wrap.append(graveCard);
   function showGraveCard(g) {
     const d = (ts) => (ts ? new Date(ts).toISOString().slice(0, 10) : "?");
-    graveCard.replaceChildren(
+    graveCard.replaceChildren(...[
       el("button", { class: "close", "aria-label": tr("report.close"), onclick: () => { graveCard.hidden = true; } }, "×"),
       el("strong", { text: g.name ?? tr("home.anAgent") }),
       el("span", { class: "muted small", text: `${g.home_name ? `${tr("grave.of", { home: g.home_name })} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
       g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null,
-      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id));
+      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id)].filter(Boolean));
     graveCard.hidden = false;
   }
   function click(px, py, type) {

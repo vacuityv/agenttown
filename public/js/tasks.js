@@ -125,7 +125,7 @@ export function mountTasks(root, { navigate, setHeaderStats, id }) {
         try { if (!demoTasks()) await reportTask(task.id); reportBtn.textContent = t("tasks.reported"); }
         catch { reportBtn.textContent = t("tasks.reportFail"); reportBtn.disabled = false; }
       } }, t("report.button"));
-      page.replaceChildren(
+      page.replaceChildren(...[
         back,
         el("div", { class: "task-detail" },
           el("section", { class: "card" },
@@ -149,7 +149,7 @@ export function mountTasks(root, { navigate, setHeaderStats, id }) {
             el("section", { class: "card" },
               el("h2", { text: t("tasks.timeline") }),
               el("ol", { class: "task-timeline" }, ...timeline.map(([label, ts]) => el("li", {}, el("span", { text: label }), el("time", { class: "muted small", text: ts ? `${date(ts)} · ${t("time.ago", { t: timeAgo(ts) })}` : "" }))))))),
-      );
+      ].filter(Boolean));
     } catch (e) {
       if (e instanceof MarketUnavailable) { page.replaceChildren(); unavailable(page, navigate); return; }
       page.replaceChildren(el("div", { class: "card notfound" },

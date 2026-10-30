@@ -114,14 +114,86 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   function scheduleReload() { clearTimeout(reloadTimer); reloadTimer = setTimeout(load, 800); }
 
   let saysLoaded = [];
+  // The timeline shows activity in blocks, not every status change: a run of thinking/tool events of one session
+  // becomes one line ("worked 3 min · Bash ×4, Read"); task starts, waiting and leaving stay as their own lines.
+  let rawEvents = []; // ascending by ts
   async function loadEvents() {
     try {
-      const r = await api(`/homes/${encodeURIComponent(id)}/events?limit=40`);
-      const items = [...r.events.map((ev) => ({ ts: ev.ts, node: eventItem(ev) })), ...saysLoaded.map((m) => ({ ts: m.ts, node: sayItem(m) }))];
-      items.sort((a, b) => b.ts - a.ts);
-      timeline.replaceChildren(...items.map((i) => i.node));
-      if (!r.events.length) timeline.append(el("li", { class: "muted small", text: tr("home.noActivity") }));
+      const r = await api(`/homes/${encodeURIComponent(id)}/events?limit=400`);
+      rawEvents = r.events.slice().sort((a, b) => a.ts - b.ts);
+      renderTimeline();
     } catch {}
+  }
+  let tlTimer = 0;
+  function scheduleTimeline() { clearTimeout(tlTimer); tlTimer = setTimeout(renderTimeline, 400); }
+  function renderTimeline() {
+    const items = [...groupEvents(rawEvents), ...saysLoaded.map((m) => ({ ts: m.ts, node: sayItem(m) }))];
+    items.sort((a, b) => b.ts - a.ts);
+    timeline.replaceChildren(...items.slice(0, 60).map((i) => i.node));
+    if (!items.length) timeline.append(el("li", { class: "muted small", text: tr("home.noActivity") }));
+  }
+  function groupEvents(evs) {
+    const out = [];
+    const open = new Map(); // session_id -> block
+    const close = (sid) => {
+      const b = open.get(sid);
+      if (!b) return;
+      open.delete(sid);
+      out.push({ ts: b.end, node: blockItem(b) });
+    };
+    for (const ev of evs) {
+      const sid = ev.session_id;
+      const busy = ev.status === "thinking" || ev.status === "tool";
+      let b = open.get(sid);
+      if (busy) {
+        // A new task, or a long silence, starts a new block.
+        if (b && ((ev.task_no && b.task_no && ev.task_no !== b.task_no) || ev.ts - b.end > 10 * 60_000)) { close(sid); b = null; }
+        if (!b) {
+          b = { session_id: sid, persona_id: ev.persona_id, start: ev.ts, end: ev.ts, task_no: ev.task_no, tools: new Map() };
+          open.set(sid, b);
+          if (ev.task_no && !out.some((o) => o.taskStart === `${sid}|${ev.task_no}`)) {
+            out.push({ ts: ev.ts, taskStart: `${sid}|${ev.task_no}`, node: lineItem(ev, "thinking", tr("home.startedTask", { n: ev.task_no })) });
+          }
+        }
+        b.end = ev.ts;
+        b.task_no ??= ev.task_no;
+        if (ev.status === "tool" && ev.tool) b.tools.set(ev.tool, (b.tools.get(ev.tool) ?? 0) + 1);
+      } else {
+        if (b) { b.end = Math.max(b.end, ev.ts); close(sid); }
+        if (ev.status === "waiting") out.push({ ts: ev.ts, node: lineItem(ev, "waiting", tr("home.waitingForYou")) });
+        else if (ev.status === "ended") out.push({ ts: ev.ts, node: lineItem(ev, "ended", tr("home.leftHome")) });
+        // idle: implied by the end of the block
+      }
+    }
+    for (const sid of [...open.keys()]) {
+      const b = open.get(sid);
+      open.delete(sid);
+      out.push({ ts: b.end, node: blockItem(b, true) });
+    }
+    return out;
+  }
+  function fmtDur(ms) {
+    const m = Math.round(ms / 60_000);
+    if (m < 1) return tr("dur.lt1");
+    if (m < 60) return tr("dur.min", { n: m });
+    return tr("dur.h", { h: Math.floor(m / 60), m: m % 60 });
+  }
+  function blockItem(b, ongoing = false) {
+    const tools = [...b.tools.entries()].sort((x, y) => y[1] - x[1]).map(([k, n]) => (n > 1 ? `${k} ×${n}` : k)).join(", ");
+    const when = hhmm(b.start) === hhmm(b.end) ? hhmm(b.end) : `${hhmm(b.start)}–${hhmm(b.end)}`;
+    return el("li", { class: ongoing ? "block ongoing" : "block" },
+      el("time", { text: when, datetime: new Date(b.end).toISOString() }),
+      el("span", { class: "dot", style: `background:${STATUS_COLOR[b.tools.size ? "tool" : "thinking"]}` }),
+      el("span", { class: "who", text: truncate(personaName(b) ?? tr("home.anAgent"), 18) }),
+      el("span", { class: "what", text: tr("home.worked", { d: fmtDur(b.end - b.start) }) + (tools ? ` · ${tools}` : "") }),
+      b.task_no ? el("span", { class: "task muted", text: `#${b.task_no}` }) : null);
+  }
+  function lineItem(ev, color, text) {
+    return el("li", {},
+      el("time", { text: hhmm(ev.ts), datetime: new Date(ev.ts).toISOString() }),
+      el("span", { class: "dot", style: `background:${STATUS_COLOR[color] ?? "#999"}` }),
+      el("span", { class: "who", text: truncate(personaName(ev) ?? tr("home.anAgent"), 18) }),
+      el("span", { class: "what", text }));
   }
   async function loadStats() {
     try { renderStats(await api(`/homes/${encodeURIComponent(id)}/stats?days=14`)); } catch {}
@@ -140,15 +212,16 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     home: (h) => { if (h.id === id) { home = { ...home, ...h }; applyMeta(h); renderHead(); } },
     say: (m) => {
       sim.say(m.persona_id, m.text, m.ts);
-      timeline.querySelector(".muted.small")?.remove();
-      timeline.prepend(sayItem(m));
-      while (timeline.children.length > 60) timeline.lastChild.remove();
+      saysLoaded = [m, ...saysLoaded.filter((x) => x.id !== m.id)].slice(0, 30);
+      scheduleTimeline();
     },
     persona: (p) => upsertPersona(p),
     say_removed: () => { load(); loadEvents(); }, // moderation hid a say (or a persona/home): resync
     session: (s) => {
       applySession(s, true);
-      prependEvent({ session_id: s.id, persona_id: s.persona_id, ts: Date.now(), status: s.status, tool: s.tool, task_no: s.task_no });
+      rawEvents.push({ session_id: s.id, persona_id: s.persona_id, ts: Date.now(), status: s.status, tool: s.tool, task_no: s.task_no });
+      if (rawEvents.length > 800) rawEvents = rawEvents.slice(-400);
+      scheduleTimeline();
     },
   }, {
     onReconnect: () => { load(); loadEvents(); },
@@ -218,16 +291,6 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     const pid = ev.persona_id ?? seenSessions.get(ev.session_id) ?? sessions.get(ev.session_id)?.persona_id;
     return pid && personas.get(pid)?.name;
   }
-  function eventItem(ev) {
-    const name = personaName(ev) ?? tr("home.anAgent");
-    const s = { status: ev.status, tool: ev.tool };
-    return el("li", {},
-      el("time", { text: hhmm(ev.ts), datetime: new Date(ev.ts).toISOString() }),
-      el("span", { class: "dot", style: `background:${STATUS_COLOR[ev.status] ?? "#999"}` }),
-      el("span", { class: "who", text: truncate(name, 18) }),
-      el("span", { class: "what", text: statusText(s) }),
-      ev.task_no ? el("span", { class: "task muted", text: `#${ev.task_no}` }) : null);
-  }
   function sayItem(m) {
     return el("li", { class: "say" },
       el("time", { text: hhmm(m.ts ?? Date.now()), datetime: new Date(m.ts ?? Date.now()).toISOString() }),
@@ -236,16 +299,6 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }),
       reportButton("say", m.id, ""));
   }
-  let lastEv = "";
-  function prependEvent(ev) {
-    const key = `${ev.session_id}|${ev.status}|${ev.tool}|${ev.task_no}`;
-    if (key === lastEv) return; // collapse identical consecutive heartbeats
-    lastEv = key;
-    timeline.querySelector(".muted.small")?.remove();
-    timeline.prepend(eventItem(ev));
-    while (timeline.children.length > 60) timeline.lastChild.remove();
-  }
-
   function renderStats(st) {
     const days = [];
     const byDay = new Map(st.daily.map((d) => [d.day, d]));
@@ -411,13 +464,13 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     const parent = s.parent_id ? sessions.get(s.parent_id) : null;
     const where = spotLabel(e.target?.kind);
     const task = e.sleeper ? null : taskLine(s);
-    tip.replaceChildren(
+    tip.replaceChildren(...[
       el("strong", { text: p?.name ?? tr("kind.other") }),
       el("span", { class: "muted", text: parent ? tr("home.subagentOf", { kind: kindLabel(p?.kind), name: personas.get(parent.persona_id)?.name ?? "…" }) : kindLabel(p?.kind) }),
       el("span", { text: e.sleeper ? tr("home.asleepNoSession") : `${statusText(s)}${where ? tr("home.atThe", { where }) : ""}`, style: `color:${STATUS_COLOR[s.status] ?? "#c9c2e8"}` }),
       task ? el("span", { class: task.mine ? "" : "muted", text: task.text }) : null,
       s.started_at ? el("span", { class: "muted small", text: tr("home.inFor", { a: timeAgo(s.started_at), b: timeAgo(s.last_seen) }) }) : null,
-    );
+    ].filter(Boolean));
     tip.hidden = false;
     const r = roomWrap.getBoundingClientRect();
     tip.style.left = clamp(px + 12, 4, r.width - tip.offsetWidth - 4) + "px";

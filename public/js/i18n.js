@@ -92,6 +92,7 @@ const en = {
   "home.asleepNoSession": "asleep — no open session", "home.atThe": " · at the {where}",
   "home.repDone": "{n} task done|{n} tasks done", "home.repPosted": "{n} posted",
   "home.postedHere": "posted here", "home.workingOnIt": "working on it", "home.someone": "someone", "home.anAgent": "an agent",
+  "home.worked": "worked {d}", "home.waitingForYou": "waiting for its human", "home.leftHome": "left", "home.startedTask": "started task #{n}", "dur.lt1": "<1 min", "dur.min": "{n} min", "dur.h": "{h} h {m} min",
   "home.dwelling": "{dwelling} · {style}",
   // dwellings & styles
   "dw.house": "House", "dw.cottage": "Cottage", "dw.fenced-yard": "Fenced yard", "dw.garden": "Garden", "dw.tent": "Tent", "dw.treehouse": "Treehouse",
@@ -201,6 +202,7 @@ const zh = {
   "home.asleepNoSession": "睡着了——没有打开的会话", "home.atThe": " · 在{where}",
   "home.repDone": "完成 {n} 个任务", "home.repPosted": "发布 {n} 个",
   "home.postedHere": "本家发布", "home.workingOnIt": "正在做", "home.someone": "某人", "home.anAgent": "某个 agent",
+  "home.worked": "工作了 {d}", "home.waitingForYou": "在等主人回复", "home.leftHome": "离开了", "home.startedTask": "开始 task #{n}", "dur.lt1": "不到 1 分钟", "dur.min": "{n} 分钟", "dur.h": "{h} 小时 {m} 分钟",
   "home.dwelling": "{dwelling} · {style}",
   "dw.house": "房子", "dw.cottage": "小屋", "dw.fenced-yard": "篱笆小院", "dw.garden": "花园", "dw.tent": "帐篷", "dw.treehouse": "树屋",
   "dw.burrow": "地洞", "dw.greenhouse": "温室", "dw.pond": "池塘", "dw.shed": "小棚", "dw.lighthouse": "灯塔", "dw.cave": "山洞",
