@@ -1,0 +1,20 @@
+[Unit]
+Description=Agent Town
+After=network.target
+
+[Service]
+Type=simple
+User=agenttown
+WorkingDirectory=/opt/agenttown
+EnvironmentFile=/opt/agenttown/.env
+ExecStart=/opt/agenttown/node/bin/node --disable-warning=ExperimentalWarning server/index.ts
+Restart=always
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/agenttown/data
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

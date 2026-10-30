@@ -1,0 +1,105 @@
+// End-to-end smoke test: boots the server on a throwaway DB and drives it through the CLI.
+import { spawn, execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createDecipheriv, createHmac } from "node:crypto";
+import assert from "node:assert/strict";
+
+const PORT = 8797;
+const BASE = `http://localhost:${PORT}`;
+const dir = mkdtempSync(join(tmpdir(), "agenttown-smoke-"));
+const env = { ...process.env, PORT: String(PORT), DB_PATH: join(dir, "t.db"), POW_DIFFICULTY: "8", PUBLIC_URL: BASE, ANTHROPIC_API_KEY: "" };
+
+const server = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server/index.ts"], { env, stdio: ["ignore", "pipe", "inherit"] });
+await new Promise<void>((ok) => server.stdout!.on("data", (d) => String(d).includes("listening") && ok()));
+
+const cliEnv = (name: string) => ({ ...env, AGENTTOWN_CONFIG: join(dir, name, "config.json"), AGENTTOWN_SERVER: BASE });
+const cli = (cfg: string, ...args: string[]) =>
+  execFileSync(process.execPath, ["public/cli/agenttown.mjs", ...args], { env: cliEnv(cfg), encoding: "utf8" });
+const get = async (p: string) => (await fetch(BASE + p)).json() as Promise<any>;
+
+try {
+  // Served CLI has the URL baked in.
+  const served = await (await fetch(`${BASE}/cli/agenttown.mjs`)).text();
+  assert.ok(served.includes(`const DEFAULT_SERVER = "${BASE}"`));
+
+  // Register once; second register is a no-op.
+  assert.match(cli("a", "register", "--home", "Smoke Home"), /Registered home "Smoke Home"/);
+  assert.match(cli("a", "register", "--home", "Again"), /Already registered/);
+  const cfg = JSON.parse(readFileSync(join(dir, "a", "config.json"), "utf8"));
+  assert.match(cfg.owner_key, /^atk_/);
+
+  // Another machine logs in with the same key.
+  assert.match(cli("b", "login", cfg.owner_key), new RegExp(cfg.home_id));
+
+  // SSE listener.
+  const seen: string[] = [];
+  const ac = new AbortController();
+  fetch(`${BASE}/v1/stream?home=${cfg.home_id}`, { signal: ac.signal }).then(async (r) => {
+    for await (const chunk of r.body!) seen.push(Buffer.from(chunk).toString());
+  }).catch(() => {});
+  const worldSeen: string[] = [];
+  fetch(`${BASE}/v1/stream`, { signal: ac.signal }).then(async (r) => {
+    for await (const chunk of r.body!) worldSeen.push(Buffer.from(chunk).toString());
+  }).catch(() => {});
+  await new Promise((r) => setTimeout(r, 200));
+
+  cli("a", "persona", "--name", "Claude", "--kind", "claude-code", "--appearance", "戴耳机的橘猫");
+  const r1 = JSON.parse(cli("a", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1", "--status", "thinking", "--task", "修复登录页的 bug"));
+  assert.equal(r1.task_no, 1);
+  cli("b", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1", "--status", "tool", "--tool", "Bash");
+  cli("a", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1:sub1", "--parent", "s-1", "--status", "tool", "--tool", "mcp__secret_corp__query", "--task", "调研");
+
+  const home = await get(`/v1/homes/${cfg.home_id}`);
+  assert.equal(home.personas.length, 1);
+  assert.equal(home.personas[0].sprite_status, "pending");
+  assert.equal(home.sessions.length, 2);
+  const [main, sub] = home.sessions;
+  assert.equal(main.status, "tool");
+  assert.equal(main.tool, "Bash");
+  assert.equal(sub.parent_id, main.id);
+  assert.equal(sub.tool, "MCP", "mcp tool names are folded");
+  assert.ok(!JSON.stringify(home).includes("修复"), "no plaintext on the public API");
+
+  // Owner can decrypt with the derived key.
+  const key = createHmac("sha256", Buffer.from(cfg.owner_key)).update("agenttown/enc/v1").digest();
+  const [, iv, ct] = main.task_enc.split(".");
+  const buf = Buffer.from(ct, "base64url");
+  const d = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64url"));
+  d.setAuthTag(buf.subarray(-16));
+  const pt = Buffer.concat([d.update(buf.subarray(0, -16)), d.final()]).toString("utf8").replace(/\0+$/, "");
+  assert.equal(pt, "修复登录页的 bug");
+
+  // Ending the parent ends the subagent.
+  cli("a", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1", "--status", "ended");
+  assert.equal((await get(`/v1/homes/${cfg.home_id}`)).sessions.length, 0);
+
+  const world = await get("/v1/world");
+  assert.equal(world.totals.homes, 1);
+  const stats = await get(`/v1/homes/${cfg.home_id}/stats`);
+  assert.equal(stats.daily[0].tasks, 2);
+  assert.ok(stats.tools.some((t: any) => t.tool === "Bash"));
+  assert.equal((await get(`/v1/homes/${cfg.home_id}/events`)).events.length, 4);
+
+  // Bad input is rejected.
+  const bad = await fetch(`${BASE}/v1/report`, { method: "POST", headers: { authorization: "Bearer " + "0".repeat(64) }, body: "{}" });
+  assert.equal(bad.status, 401);
+
+  assert.ok((await get(`/v1/homes/${cfg.home_id}/events`)).events.every((e: any) => e.persona_id), "events carry persona_id");
+
+  await new Promise((r) => setTimeout(r, 2300)); // counts/agent events are coalesced
+  ac.abort();
+  const sse = seen.join("");
+  assert.ok(sse.includes("event: session") && sse.includes("event: persona"), "home stream delivered events");
+  const town = worldSeen.join("");
+  assert.ok(town.includes("event: counts") && town.includes("event: agent") && !town.includes("event: session"), "town stream: counts + agents");
+  assert.ok(!town.includes("task_enc") && !town.includes("task_no"), "town stream carries no task data");
+  const t = await get(`/v1/town?ids=${cfg.home_id},h_nonexistent`);
+  assert.equal(t.homes.length, 1);
+  assert.equal(t.homes[0].personas[0].name, "Claude");
+
+  console.log("smoke: all checks passed");
+} finally {
+  server.kill();
+}

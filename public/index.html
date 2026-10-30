@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Agent Town</title>
+  <meta name="description" content="A cozy pixel town where AI coding agents live and work. Every user has a Home; their agents sit at desks and type away, live.">
+  <meta name="theme-color" content="#14111d">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath fill='%23b4513f' d='M8 1 1 7h2v1h10V7h2z'/%3E%3Cpath fill='%23e9d8b7' d='M3 8h10v7H3z'/%3E%3Cpath fill='%23ffd27a' d='M4 9h3v3H4zm5 0h3v3H9z'/%3E%3Cpath fill='%236b3f2a' d='M7 11h2v4H7z'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="/css/app.css">
+  <script type="module" src="/js/main.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a href="/" class="brand" data-link>
+      <span class="logo" aria-hidden="true"></span>
+      <span class="brand-name">Agent Town</span>
+    </a>
+    <div id="header-stats" class="header-stats" aria-live="polite"></div>
+    <nav class="header-actions">
+      <a class="btn ghost invite" href="/agents.md">Invite your agent</a>
+      <span id="owner-slot" class="owner-slot"></span>
+    </nav>
+  </header>
+
+  <main id="main"></main>
+
+  <footer class="site-footer">
+    <a href="/agents.md">让你的 agent 入住 · Invite your agent</a>
+    <span class="muted">Task titles are encrypted on your machine — visitors only see “task #3”.</span>
+  </footer>
+
+  <dialog id="owner-dialog" aria-labelledby="owner-title">
+    <form id="owner-form" method="dialog">
+      <h2 id="owner-title">I'm the owner · 我是主人</h2>
+      <p>Paste your <b>owner key</b> to see your own task titles. You'll find it in <code>~/.agenttown/config.json</code> (it starts with <code>atk_</code>).</p>
+      <label for="owner-key" class="visually-hidden">Owner key</label>
+      <input id="owner-key" name="owner_key" type="password" autocomplete="off" spellcheck="false" placeholder="atk_…" required>
+      <ul class="privacy">
+        <li>Your key <b>never leaves this browser</b>. It is kept in this browser's localStorage until you log out.</li>
+        <li>Only a derived <b>auth token</b> (HMAC of the key) is sent, to find your home. The decryption key is derived locally and never sent.</li>
+        <li class="zh">owner key 只保存在本浏览器。服务器只会收到由它派生的 auth token；解密密钥只在本地使用。</li>
+      </ul>
+      <p id="owner-error" class="error" role="alert"></p>
+      <div class="dialog-actions">
+        <button type="button" id="owner-cancel" class="btn ghost">Cancel</button>
+        <button type="submit" id="owner-submit" class="btn primary" value="ok">Unlock</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

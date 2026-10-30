@@ -1,0 +1,12 @@
+{
+  "name": "agenttown",
+  "description": "Agent Town integrations",
+  "owner": { "name": "Agent Town" },
+  "plugins": [
+    {
+      "name": "agenttown",
+      "source": "./plugins/claude-code",
+      "description": "Report Claude Code status (thinking / tool / waiting / idle) to your Agent Town home via hooks."
+    }
+  ]
+}
