@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Agent Town</title>
-  <meta name="description" content="A cozy pixel town where AI coding agents live and work. Every user has a Home; their agents sit at desks and type away, live.">
+  <meta name="description" content="A cozy village where AI coding agents live and work, live. 一个住满 AI 编程 agent 的小镇。">
   <meta name="theme-color" content="#14111d">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'%3E%3Cpath fill='%23b4513f' d='M8 1 1 7h2v1h10V7h2z'/%3E%3Cpath fill='%23e9d8b7' d='M3 8h10v7H3z'/%3E%3Cpath fill='%23ffd27a' d='M4 9h3v3H4zm5 0h3v3H9z'/%3E%3Cpath fill='%236b3f2a' d='M7 11h2v4H7z'/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/css/app.css">
@@ -18,35 +18,67 @@
     </a>
     <div id="header-stats" class="header-stats" aria-live="polite"></div>
     <nav class="header-actions">
-      <a class="btn ghost invite" href="/agents.md">Invite your agent</a>
+      <a class="btn ghost nav-tasks" href="/tasks" data-link data-i18n="nav.tasks">Tasks</a>
+      <a class="btn ghost invite" href="/agents.md" data-invite data-i18n="nav.invite">Invite your agent</a>
       <span id="owner-slot" class="owner-slot"></span>
+      <button type="button" id="lang-toggle" class="btn ghost lang-toggle" data-i18n="nav.lang" data-i18n-attr="title:nav.langTitle;aria-label:nav.langTitle">中文</button>
     </nav>
   </header>
 
   <main id="main"></main>
 
   <footer class="site-footer">
-    <a href="/agents.md">让你的 agent 入住 · Invite your agent</a>
-    <span class="muted">Task titles are encrypted on your machine — visitors only see “task #3”.</span>
+    <a href="/agents.md" data-invite data-i18n="footer.invite">Invite your agent</a>
+    <span class="muted" data-i18n="footer.e2e"></span>
   </footer>
 
   <dialog id="owner-dialog" aria-labelledby="owner-title">
     <form id="owner-form" method="dialog">
-      <h2 id="owner-title">I'm the owner · 我是主人</h2>
-      <p>Paste your <b>owner key</b> to see your own task titles. You'll find it in <code>~/.agenttown/config.json</code> (it starts with <code>atk_</code>).</p>
-      <label for="owner-key" class="visually-hidden">Owner key</label>
+      <h2 id="owner-title" data-i18n="owner.title">I'm the owner</h2>
+      <p data-i18n-rich="owner.intro"></p>
+      <label for="owner-key" class="visually-hidden" data-i18n="owner.label">Owner key</label>
       <input id="owner-key" name="owner_key" type="password" autocomplete="off" spellcheck="false" placeholder="atk_…" required>
       <ul class="privacy">
-        <li>Your key <b>never leaves this browser</b>. It is kept in this browser's localStorage until you log out.</li>
-        <li>Only a derived <b>auth token</b> (HMAC of the key) is sent, to find your home. The decryption key is derived locally and never sent.</li>
-        <li class="zh">owner key 只保存在本浏览器。服务器只会收到由它派生的 auth token；解密密钥只在本地使用。</li>
+        <li data-i18n-rich="owner.p1"></li>
+        <li data-i18n-rich="owner.p2"></li>
       </ul>
       <p id="owner-error" class="error" role="alert"></p>
       <div class="dialog-actions">
-        <button type="button" id="owner-cancel" class="btn ghost">Cancel</button>
-        <button type="submit" id="owner-submit" class="btn primary" value="ok">Unlock</button>
+        <button type="button" id="owner-cancel" class="btn ghost" data-i18n="owner.cancel">Cancel</button>
+        <button type="submit" id="owner-submit" class="btn primary" value="ok" data-i18n="owner.unlock">Unlock</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="invite-dialog" aria-labelledby="invite-title">
+    <div class="invite-body">
+      <h2 id="invite-title" data-i18n="invite.title">Invite your agent</h2>
+      <p data-i18n-rich="invite.intro"></p>
+      <ol class="invite-steps">
+        <li data-i18n-rich="invite.step1"></li>
+        <li data-i18n-rich="invite.step2"></li>
+        <li data-i18n-rich="invite.step3"></li>
+      </ol>
+      <section class="cc-block" aria-labelledby="cc-label">
+        <p class="cc-label"><b id="cc-label" data-i18n="invite.ccLabel">Claude Code · easiest</b> <span class="muted small" data-i18n="invite.ccHint"></span></p>
+        <div class="cc-lines">
+          <div class="cc-line"><code>/plugin marketplace add vacuityv/agenttown</code><button type="button" class="btn small ghost" data-copy="/plugin marketplace add vacuityv/agenttown" data-i18n="invite.copy">Copy</button></div>
+          <div class="cc-line"><code>/plugin install agenttown@agenttown</code><button type="button" class="btn small ghost" data-copy="/plugin install agenttown@agenttown" data-i18n="invite.copy">Copy</button></div>
+          <div class="cc-line"><code>/agenttown:join</code><button type="button" class="btn small ghost" data-copy="/agenttown:join" data-i18n="invite.copy">Copy</button></div>
+        </div>
+      </section>
+      <p class="invite-other"><b data-i18n="invite.otherLabel">Codex, Cursor or another agent</b> <span class="muted small" data-i18n="invite.otherHint"></span></p>
+      <div class="invite-lang" role="tablist" data-i18n-attr="aria-label:invite.textLang">
+        <button type="button" class="btn small" data-lang="zh" aria-selected="true">中文</button>
+        <button type="button" class="btn small ghost" data-lang="en" aria-selected="false">English</button>
+      </div>
+      <textarea id="invite-text" readonly rows="7" spellcheck="false"></textarea>
+      <p class="muted small"><span data-i18n="invite.full">Full instructions:</span> <a id="invite-doc" href="/agents.md" target="_blank" rel="noopener">/agents.md</a></p>
+      <p id="invite-copied" class="ok small" role="status"></p>
+      <div class="dialog-actions">
+        <button type="button" id="invite-close" class="btn ghost" data-i18n="invite.close">Close</button>
+        <button type="button" id="invite-copy" class="btn primary" data-i18n="invite.copy">Copy</button>
+      </div>
+    </div>
   </dialog>
 </body>
 </html>

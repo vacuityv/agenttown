@@ -29,7 +29,9 @@ const TOOL_SPOT = {
   Edit: "write", Write: "write", MultiEdit: "write", NotebookEdit: "write", apply_patch: "write",
   WebFetch: "radio", WebSearch: "radio", MCP: "mcp", Task: "agent", Agent: "agent",
 };
-export const SPOT_LABEL = { desk: "desk", shelf: "bookshelf", bench: "terminal", write: "writing table", mcp: "MCP corner", radio: "radio", rest: "sofa", door: "front door", bed: "bed" };
+import { t as tr } from "./i18n.js";
+// Localized name of an activity spot ("desk", "bookshelf", …).
+export const spotLabel = (kind) => (kind ? tr(`spot.${kind}`) : "");
 
 // ---------- seasons (a few touches follow the calendar) ----------
 export function season(d = new Date()) {
@@ -1093,12 +1095,12 @@ export class HomeSim {
 // Text for a resident's status bubble.
 export function statusLine(e) {
   const a = e.a;
-  if (e.sleeper || e.pose === "sleep") return "z z z";
-  if (e.ending) return "bye!";
-  if (a.status === "tool") return `⚙ ${a.tool || "tool"}`;
-  if (a.status === "thinking") return "thinking…";
-  if (a.status === "waiting") return "? needs you";
-  return "resting";
+  if (e.sleeper || e.pose === "sleep") return tr("st.asleep");
+  if (e.ending) return tr("st.bye");
+  if (a.status === "tool") return tr("st.tool", { tool: a.tool || tr("st.toolGeneric") });
+  if (a.status === "thinking") return tr("st.thinking");
+  if (a.status === "waiting") return tr("st.needsYou");
+  return tr("st.resting");
 }
 
 export const BASE_PAD = PAD;

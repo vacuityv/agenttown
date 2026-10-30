@@ -1,24 +1,27 @@
 // "/h/:id" — one Home, up close. Same top-down interior as the town (shared HomeSim renderer), drawn
 // bigger, with speech bubbles (task titles decrypted locally for the owner), side panel and stats.
 import { api, openStream } from "./api.js";
-import { HomeSim, statusLine, SPOT_LABEL, setHomeMeta, onDwellingChange } from "./interior.js";
+import { HomeSim, statusLine, spotLabel, setHomeMeta, onDwellingChange, planFor } from "./interior.js";
+import { t as tr, kindLabel as kindName } from "./i18n.js";
 import { spriteIcon } from "./sprites.js";
+import { fetchHomeTasks, MarketUnavailable } from "./market.js";
+import { coin } from "./tasks.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
 import { reportButton } from "./report.js";
 
-export const kindLabel = (k) =>
-  k === "claude-code" ? "Claude Code" : k === "codex" ? "Codex" : k ? k.charAt(0).toUpperCase() + k.slice(1) : "Agent";
+export const kindLabel = kindName;
 
 function statusText(s) {
-  if (s.status === "tool") return `⚙ ${s.tool || "tool"}`;
-  if (s.status === "thinking") return "thinking…";
-  if (s.status === "waiting") return "waiting for you";
-  if (s.status === "ended") return "left";
-  return "idle";
+  if (s.status === "tool") return tr("st.tool", { tool: s.tool || tr("st.toolGeneric") });
+  if (s.status === "thinking") return tr("st.thinking");
+  if (s.status === "waiting") return tr("st.waiting");
+  if (s.status === "ended") return tr("st.ended");
+  return tr("st.idle");
 }
 const STATUS_COLOR = { tool: "#ffcf6e", thinking: "#8bd3c7", waiting: "#ff9bb3", idle: "#9a8fb5", ended: "#6e6680" };
 const MARGIN = 6; // art px around the house
+const flavorDwelling = (plan) => ({ yard: "fenced-yard", camp: "tent", dock: "pond", burrow: "burrow", greenhouse: "greenhouse" })[plan.kind] ?? "house";
 function applyMeta(h) {
   const m = {};
   for (const k of ["dwelling", "style", "art", "art_status"]) if (k in h) m[k] = h[k];
@@ -29,27 +32,32 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
   const title = el("h1", { class: "home-name", text: "…" });
   const summary = el("p", { class: "home-summary muted" });
+  const repLine = el("p", { class: "rep", hidden: true });
+  const tasksList = el("ul", { class: "home-tasks" });
+  const tasksCard = el("section", { class: "card", hidden: true }, el("h2", { text: tr("home.tasks") }), tasksList);
   const descr = el("p", { class: "home-descr", hidden: true });
+  const dwellLine = el("p", { class: "muted small dwell-line" });
   const badge = el("p", { class: "owner-badge", hidden: true });
-  const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": "Home interior, seen from above" });
+  const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": tr("home.aria") });
   const tip = el("div", { class: "tip", hidden: true });
   const roomWrap = el("div", { class: "room-wrap" }, canvas, tip);
-  const emptyNote = el("p", { class: "empty-note", hidden: true, text: "Everyone's asleep right now · 大家都睡了" });
-  const legend = el("p", { class: "legend muted small", text: "Desk: thinking & coding · Terminal: Bash · Bookshelf: Read/Grep · Writing table: Edit/Write · Radio: Web · Crates: MCP · Sofa: resting · Bed: asleep · Door: needs you" });
+  const emptyNote = el("p", { class: "empty-note", hidden: true, text: tr("home.empty") });
+  const legend = el("p", { class: "legend muted small", text: tr("home.legend") });
   const personaList = el("ul", { class: "persona-list" });
   const timeline = el("ol", { class: "timeline" });
-  const statsBox = el("div", { class: "stats" }, el("p", { class: "muted small", text: "Loading…" }));
+  const statsBox = el("div", { class: "stats" }, el("p", { class: "muted small", text: tr("tasks.loading") }));
 
   const page = el("div", { class: "home-page" },
     el("section", { class: "room-col" },
       el("div", { class: "room-head" },
-        el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, "← Town"),
-        title, descr, summary, badge, el("p", { class: "report-row" }, reportButton("home", id, "Report"))),
+        el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, tr("home.back")),
+        title, dwellLine, descr, summary, badge, el("p", { class: "report-row" }, reportButton("home", id))),
       roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
-      el("section", { class: "card" }, el("h2", { text: "Residents · 住户" }), personaList),
-      el("section", { class: "card" }, el("h2", { text: "Last 14 days" }), statsBox),
-      el("section", { class: "card" }, el("h2", { text: "Recent activity" }), timeline),
+      el("section", { class: "card" }, el("h2", { text: tr("home.residents") }), personaList),
+      tasksCard,
+      el("section", { class: "card" }, el("h2", { text: tr("home.last14") }), statsBox),
+      el("section", { class: "card" }, el("h2", { text: tr("home.activity") }), timeline),
     ),
   );
   root.append(page);
@@ -98,7 +106,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       schedulePanel();
     } catch (e) {
       if (e.status === 404) return notFound();
-      summary.textContent = "Couldn't load this home. Retrying…";
+      summary.textContent = tr("home.loadError");
       setTimeout(() => !dead && load(), 5000);
     }
   }
@@ -112,7 +120,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       const items = [...r.events.map((ev) => ({ ts: ev.ts, node: eventItem(ev) })), ...saysLoaded.map((m) => ({ ts: m.ts, node: sayItem(m) }))];
       items.sort((a, b) => b.ts - a.ts);
       timeline.replaceChildren(...items.map((i) => i.node));
-      if (!r.events.length) timeline.append(el("li", { class: "muted small", text: "No activity yet." }));
+      if (!r.events.length) timeline.append(el("li", { class: "muted small", text: tr("home.noActivity") }));
     } catch {}
   }
   async function loadStats() {
@@ -121,9 +129,9 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
 
   function notFound() {
     page.replaceChildren(el("div", { class: "card notfound" },
-      el("h1", { text: "No such home" }),
-      el("p", { class: "muted", text: "This address doesn't exist (or it moved away)." }),
-      el("a", { href: "/", class: "btn", onclick: (e) => { e.preventDefault(); navigate("/"); } }, "← Back to town")));
+      el("h1", { text: tr("home.notFound") }),
+      el("p", { class: "muted", text: tr("home.notFoundText") }),
+      el("a", { href: "/", class: "btn", onclick: (e) => { e.preventDefault(); navigate("/"); } }, tr("home.backToTown"))));
     dead = true;
     cleanup();
   }
@@ -154,19 +162,28 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   function renderHead() {
     if (!home) return;
     title.textContent = home.name;
+    const rep = home.rep;
+    repLine.hidden = !rep;
+    if (rep) repLine.replaceChildren(
+      el("span", { class: "stars", text: rep.rating ? `★ ${Number(rep.rating).toFixed(1)}` : "★ –" }),
+      el("span", { text: tr("home.repDone", { n: rep.done ?? 0 }) }),
+      el("span", { class: "muted", text: tr("home.repPosted", { n: rep.posted ?? 0 }) }));
     descr.hidden = !home.description;
     descr.textContent = home.description ?? "";
     document.title = `${home.name} · Agent Town`;
     let open = 0, busy = 0, subs = 0;
     for (const s of sessions.values()) { open++; if (BUSY.has(s.status)) busy++; if (s.parent_id) subs++; }
     summary.textContent = open
-      ? `${open - subs} awake${subs ? ` + ${subs} subagent${subs === 1 ? "" : "s"}` : ""} · ${busy} busy`
-      : "Lights off — everyone's asleep.";
+      ? (subs ? tr("home.summarySubs", { awake: open - subs, subs, n: subs, busy }) : tr("home.summary", { awake: open, busy }))
+      : tr("home.lightsOff");
+    const plan = planFor(id);
+    legend.textContent = plan.art ? tr("home.legendArt") : tr("home.legend");
+    dwellLine.textContent = tr("home.dwelling", { dwelling: plan.art ? tr("dw.art") : tr(`dw.${home.dwelling ?? flavorDwelling(plan)}`), style: tr(`sty.${plan.rstyle}`) });
     emptyNote.hidden = open > 0;
-    setHeaderStats([["open", open, "online"], ["busy", busy, "busy"]], live);
+    setHeaderStats([["open", open, "stats.online"], ["busy", busy, "stats.busy"]], live);
     const mine = isMine();
     badge.hidden = !mine;
-    badge.textContent = mine ? "🔑 Your home — task titles are decrypted locally in this browser." : "";
+    badge.textContent = mine ? tr("home.ownerBadge") : "";
   }
 
   let panelTimer = 0;
@@ -184,17 +201,17 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     }
     const items = [...personas.values()].map((p) => {
       const c = counts.get(p.id);
-      const state = c ? (c.busy ? `working · ${c.open} open` : `awake · ${c.open} open`) : "asleep";
+      const state = c ? (c.busy ? tr("home.pWorking", { n: c.open }) : tr("home.pAwake", { n: c.open })) : tr("home.pAsleep");
       return el("li", { class: c ? "on" : "off" },
         spriteIcon(p, 1.5),
         el("div", {},
           el("strong", { text: p.name }),
           el("span", { class: "muted small", text: `${kindLabel(p.kind)} · ${state}` }),
-          p.sprite_status === "pending" ? el("span", { class: "small accent", text: "new look being drawn…" }) : null,
+          p.sprite_status === "pending" ? el("span", { class: "small accent", text: tr("home.newLook") }) : null,
           p.appearance ? el("span", { class: "small muted appearance", text: `“${truncate(p.appearance, 90)}”` }) : null),
         p.hidden ? null : reportButton("persona", p.id, ""));
     });
-    personaList.replaceChildren(...(items.length ? items : [el("li", { class: "muted small", text: "No residents yet." })]));
+    personaList.replaceChildren(...(items.length ? items : [el("li", { class: "muted small", text: tr("home.noResidents") })]));
   }
 
   function personaName(ev) {
@@ -202,7 +219,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     return pid && personas.get(pid)?.name;
   }
   function eventItem(ev) {
-    const name = personaName(ev) ?? "an agent";
+    const name = personaName(ev) ?? tr("home.anAgent");
     const s = { status: ev.status, tool: ev.tool };
     return el("li", {},
       el("time", { text: hhmm(ev.ts), datetime: new Date(ev.ts).toISOString() }),
@@ -215,7 +232,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     return el("li", { class: "say" },
       el("time", { text: hhmm(m.ts ?? Date.now()), datetime: new Date(m.ts ?? Date.now()).toISOString() }),
       el("span", { class: "dot", style: "background:#ffffff" }),
-      el("span", { class: "who", text: truncate(personas.get(m.persona_id)?.name ?? "someone", 18) }),
+      el("span", { class: "who", text: truncate(personas.get(m.persona_id)?.name ?? tr("home.someone"), 18) }),
       el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }),
       reportButton("say", m.id, ""));
   }
@@ -239,16 +256,14 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     const max = Math.max(...days.map((d) => d.busy_ms), 1);
     const totalH = days.reduce((a, d) => a + d.busy_ms, 0) / 3.6e6;
     const totalTasks = days.reduce((a, d) => a + d.tasks, 0);
-    const bars = el("div", { class: "bars", role: "img", "aria-label": `Busy hours per day, ${totalH.toFixed(1)} hours total` },
+    const bars = el("div", { class: "bars", role: "img", "aria-label": tr("home.barsAria", { h: totalH.toFixed(1) }) },
       ...days.map((d) => {
         const h = d.busy_ms / 3.6e6;
-        return el("div", { class: "bar", title: `${d.day}: ${h.toFixed(1)} h busy, ${d.tasks} task${d.tasks === 1 ? "" : "s"}` },
+        return el("div", { class: "bar", title: tr("home.barTitle", { day: d.day, h: h.toFixed(1), n: d.tasks }) },
           el("span", { style: `height:${Math.max(d.busy_ms ? 4 : 1, Math.round((d.busy_ms / max) * 100))}%` }));
       }));
-    const axis = el("div", { class: "bars-axis muted small" }, el("span", { text: days[0].day.slice(5) }), el("span", { text: "today" }));
-    const head = el("p", { class: "small" },
-      el("strong", { text: `${totalH < 10 ? totalH.toFixed(1) : Math.round(totalH)} h` }), " busy · ",
-      el("strong", { text: String(totalTasks) }), ` task${totalTasks === 1 ? "" : "s"}`);
+    const axis = el("div", { class: "bars-axis muted small" }, el("span", { text: days[0].day.slice(5) }), el("span", { text: tr("home.today") }));
+    const head = el("p", { class: "small" }, el("strong", { text: tr("home.busyHours", { h: totalH < 10 ? totalH.toFixed(1) : Math.round(totalH), n: totalTasks }) }));
     const tools = st.tools.slice(0, 8);
     const tmax = Math.max(...tools.map((t) => t.count), 1);
     const toolList = el("ul", { class: "tools" }, ...tools.map((t) =>
@@ -257,8 +272,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
         el("span", { class: "tbar" }, el("span", { style: `width:${Math.max(2, Math.round((t.count / tmax) * 100))}%` })),
         el("span", { class: "tcount muted", text: String(t.count) }))));
     statsBox.replaceChildren(head, bars, axis,
-      el("h3", { text: "Tools used" }),
-      tools.length ? toolList : el("p", { class: "muted small", text: "No tool calls yet." }));
+      el("h3", { text: tr("home.toolsUsed") }),
+      tools.length ? toolList : el("p", { class: "muted small", text: tr("home.noTools") }));
   }
 
   // ---------- render ----------
@@ -318,9 +333,9 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     if (isMine() && s.task_enc) {
       const tt = titleFor(id, s.task_enc);
       if (typeof tt === "string" && tt) return { text: tt, mine: true };
-      if (tt === undefined) return { text: `task #${s.task_no} · decrypting…` };
+      if (tt === undefined) return { text: tr("home.decrypting", { n: s.task_no }) };
     }
-    return { text: `task #${s.task_no}` };
+    return { text: tr("home.task", { n: s.task_no }) };
   }
 
   function fitText(text, maxW) {
@@ -356,7 +371,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     if (e.say && e.say.until > performance.now()) return drawSay(a);
     if (s.status === "idle" && !e.ending) return; // resting quietly on the sofa
     const mini = e.mini;
-    const line1 = mini ? (s.status === "tool" ? s.tool || "tool" : s.status === "thinking" ? "…" : statusLine(e)) : statusLine(e);
+    const line1 = mini ? (s.status === "tool" ? s.tool || tr("st.toolGeneric") : s.status === "thinking" ? "…" : statusLine(e)) : statusLine(e);
     const task = !mini && !e.ending ? taskLine(s) : null;
     const pad = 4 * dpr, lh = 12 * dpr;
     const maxW = 150 * dpr;
@@ -394,14 +409,14 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     const s = e.a;
     const p = personas.get(s.persona_id);
     const parent = s.parent_id ? sessions.get(s.parent_id) : null;
-    const where = SPOT_LABEL[e.target?.kind] ?? "";
+    const where = spotLabel(e.target?.kind);
     const task = e.sleeper ? null : taskLine(s);
     tip.replaceChildren(
-      el("strong", { text: p?.name ?? "Agent" }),
-      el("span", { class: "muted", text: parent ? `${kindLabel(p?.kind)} · subagent of ${personas.get(parent.persona_id)?.name ?? "…"}` : kindLabel(p?.kind) }),
-      el("span", { text: e.sleeper ? "asleep — no open session" : `${statusText(s)}${where ? ` · at the ${where}` : ""}`, style: `color:${STATUS_COLOR[s.status] ?? "#c9c2e8"}` }),
+      el("strong", { text: p?.name ?? tr("kind.other") }),
+      el("span", { class: "muted", text: parent ? tr("home.subagentOf", { kind: kindLabel(p?.kind), name: personas.get(parent.persona_id)?.name ?? "…" }) : kindLabel(p?.kind) }),
+      el("span", { text: e.sleeper ? tr("home.asleepNoSession") : `${statusText(s)}${where ? tr("home.atThe", { where }) : ""}`, style: `color:${STATUS_COLOR[s.status] ?? "#c9c2e8"}` }),
       task ? el("span", { class: task.mine ? "" : "muted", text: task.text }) : null,
-      s.started_at ? el("span", { class: "muted small", text: `in for ${timeAgo(s.started_at)} · seen ${timeAgo(s.last_seen)} ago` }) : null,
+      s.started_at ? el("span", { class: "muted small", text: tr("home.inFor", { a: timeAgo(s.started_at), b: timeAgo(s.last_seen) }) }) : null,
     );
     tip.hidden = false;
     const r = roomWrap.getBoundingClientRect();
@@ -435,7 +450,20 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     offDwelling();
   }
 
-  load().then(() => { if (!dead) { loadEvents(); loadStats(); } });
+  async function loadTasks() {
+    try {
+      const r = await fetchHomeTasks(id);
+      const live = r.tasks.filter((t) => ["open", "assigned", "delivered", "disputed"].includes(t.status) && !t.hidden);
+      tasksCard.hidden = !live.length;
+      tasksList.replaceChildren(...live.slice(0, 8).map((t) => el("li", {},
+        el("a", { href: `/tasks/${t.id}`, onclick: (e) => { e.preventDefault(); navigate(`/tasks/${t.id}`); } },
+          el("span", { class: "ht-title", text: truncate(t.title, 80) }),
+          el("span", { class: "ht-row small" }, el("span", { class: `chip chip-${t.status}`, text: tr(`task.${t.status}`) }), coin(t.budget),
+            el("span", { class: "muted", text: t.poster_home === id ? tr("home.postedHere") : tr("home.workingOnIt") }))))));
+    } catch (e) { if (!(e instanceof MarketUnavailable)) tasksCard.hidden = true; }
+  }
+
+  load().then(() => { if (!dead) { loadEvents(); loadStats(); loadTasks(); } });
   frame(performance.now());
 
   return () => {

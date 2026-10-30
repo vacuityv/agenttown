@@ -10,6 +10,8 @@ import {
 } from "./village.js";
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
+import { t as tr, kindLabel } from "./i18n.js";
+import { fetchTasks, demoTasks, MarketUnavailable } from "./market.js";
 import { el, hash32, clamp, fitCanvas, truncate, offscreen, prefersReducedMotion } from "./util.js";
 import { reportButton } from "./report.js";
 
@@ -65,23 +67,22 @@ function drawHeadstone(ctx, x, y, s, shape, fresh) {
 
 export function mountTown(root, { navigate, setHeaderStats }) {
   const wrap = el("div", { class: "town-wrap" });
-  const canvas = el("canvas", { class: "town-canvas", "aria-label": "Village map. Each home is shown from above with its residents inside. Click a home to visit." });
+  const canvas = el("canvas", { class: "town-canvas", "aria-label": tr("town.aria") });
   const tip = el("div", { class: "tip", hidden: true });
   const controls = el("div", { class: "map-controls" },
-    el("button", { class: "btn icon", title: "Zoom in", "aria-label": "Zoom in", onclick: () => zoomBy(1) }, "+"),
-    el("button", { class: "btn icon", title: "Zoom out", "aria-label": "Zoom out", onclick: () => zoomBy(-1) }, "−"),
-    el("button", { class: "btn icon", title: "Back to the village square", "aria-label": "Recenter", onclick: () => recenter() }, "◎"),
+    el("button", { class: "btn icon", title: tr("town.zoomIn"), "aria-label": tr("town.zoomIn"), onclick: () => zoomBy(1) }, "+"),
+    el("button", { class: "btn icon", title: tr("town.zoomOut"), "aria-label": tr("town.zoomOut"), onclick: () => zoomBy(-1) }, "−"),
+    el("button", { class: "btn icon", title: tr("town.recenter"), "aria-label": tr("town.recenter"), onclick: () => recenter() }, "◎"),
   );
   let introDismissed = false;
   try { introDismissed = localStorage.getItem("agenttown.intro") === "1"; } catch {}
   const intro = introDismissed ? null : el("div", { class: "intro card" },
-    el("button", { class: "close", "aria-label": "Dismiss", onclick: () => { intro.remove(); try { localStorage.setItem("agenttown.intro", "1"); } catch {} } }, "×"),
-    el("p", { class: "intro-title", text: "A little village of AI coding agents" }),
-    el("p", { class: "long", text: "The roofs are off: peek into every home and watch its agents at work — typing at desks, reading by the shelves, napping in bed. Click a home to visit." }),
-    el("p", { class: "zh", text: "掀开屋顶，看看每家的 AI agent 在忙什么。" }),
-    el("a", { href: "/agents.md", class: "btn primary small" }, "Invite your agent · 让你的 agent 入住"),
+    el("button", { class: "close", "aria-label": tr("town.dismiss"), onclick: () => { intro.remove(); try { localStorage.setItem("agenttown.intro", "1"); } catch {} } }, "×"),
+    el("p", { class: "intro-title", text: tr("town.introTitle") }),
+    el("p", { class: "long", text: tr("town.introBody") }),
+    el("a", { href: "/agents.md", class: "btn primary small", "data-invite": "" }, tr("town.introInvite")),
   );
-  const status = el("div", { class: "map-status", text: "Loading the village…" });
+  const status = el("div", { class: "map-status", text: tr("town.loading") });
   wrap.append(canvas, tip, controls, status);
   if (intro) wrap.append(intro);
   root.append(wrap);
@@ -105,7 +106,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
 
   function updateHeader() {
-    setHeaderStats([["homes", totals.homes, "homes"], ["open", totals.open, "agents online"], ["busy", totals.busy, "busy"]], live);
+    setHeaderStats([["homes", totals.homes, "stats.homes"], ["open", totals.open, "stats.agentsOnline"], ["busy", totals.busy, "stats.busy"]], live);
   }
 
   function addHome(h) {
@@ -137,8 +138,9 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       refreshFeatures();
       status.hidden = true;
       updateHeader();
+      if (!framed) setTimeout(firstFrame, 0);
     } catch {
-      status.textContent = "Couldn't reach the village. Retrying…";
+      status.textContent = tr("town.unreachable");
       status.hidden = false;
       setTimeout(() => !dead && loadWorld(), 5000);
     }
@@ -175,6 +177,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     persona: (p) => sims.get(p.home_id)?.sim.upsertPersona(p),
     say: (m) => sims.get(m.home_id)?.sim.say(m.persona_id, m.text, m.ts),
     tombstone: (t) => { graves.list.push(t); graves.total++; },
+    task: onTask,
     tombstone_update: (t) => { const i = graves.list.findIndex((g) => g.id === t.id); if (i >= 0) graves.list[i] = t; },
     home_removed: (m) => {
       const e = byId.get(m.home_id);
@@ -189,6 +192,31 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   });
   const resyncEvery = setInterval(() => loadWorld(), 120_000);
   const offDwelling = onDwellingChange((id) => sims.get(id)?.sim.relayout());
+
+  // ---- task market cues ----
+  const market = { ok: false, open: 0, busy: new Set(), sparkles: [] };
+  async function loadMarket() {
+    try {
+      const [open, assigned, delivered] = await Promise.all([
+        fetchTasks({ status: "open", limit: 1 }), fetchTasks({ status: "assigned", limit: 200 }), fetchTasks({ status: "delivered", limit: 200 })]);
+      market.ok = true;
+      market.open = open.total;
+      market.busy = new Set([...assigned.tasks, ...delivered.tasks].flatMap((t) => [t.poster_home, t.assignee_home]).filter(Boolean));
+    } catch (e) { if (e instanceof MarketUnavailable) market.ok = false; }
+  }
+  let marketDebounce = 0;
+  function onTask(t) {
+    clearTimeout(marketDebounce);
+    marketDebounce = setTimeout(loadMarket, 1500);
+    if (t.status === "completed" && t.poster_home && t.assignee_home) market.sparkles.push({ from: t.poster_home, to: t.assignee_home, t0: performance.now() });
+  }
+  const marketTimer = setInterval(() => {
+    if (!demoTasks()) return;
+    // demo: coins fly between two random homes now and then
+    const live = homes.filter((e) => e && !e.removed && !e.home.fake);
+    if (live.length >= 2) { const a = live[(Math.random() * live.length) | 0], b = live[(Math.random() * live.length) | 0]; if (a !== b) market.sparkles.push({ from: a.home.id, to: b.home.id, t0: performance.now() }); }
+  }, 7000);
+  loadMarket();
 
   // ---- camera ----
   let W = 0, H = 0, dpr = 1;
@@ -219,8 +247,37 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
   const zoomIndex = () => ZOOMS.indexOf(cam.zoom);
   function zoomBy(d) { zoomTo(zoomIndex() + d, W / dpr / 2, H / dpr / 2); }
-  const firstSlot = () => Math.max(0, homes.findIndex((e) => e && !e.removed));
-  function recenter() { [cam.x, cam.y] = homeCenter(firstSlot()); }
+  // Frame the existing homes (the oldest ones sit in the middle of the spiral).
+  function frameHomes() {
+    const pts = [];
+    for (let k = 0; k < homes.length && pts.length < 15; k++) if (homes[k] && !homes[k].removed) pts.push(homeCenter(k));
+    if (!pts.length) { cam.x = 0; cam.y = 0; return; }
+    const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
+    const x0 = Math.min(...xs) - 110, x1 = Math.max(...xs) + 110, y0 = Math.min(...ys) - 100, y1 = Math.max(...ys) + 110;
+    cam.x = (x0 + x1) / 2; cam.y = (y0 + y1) / 2;
+    const cssW = W / dpr, cssH = H / dpr;
+    let z = ZOOMS[0];
+    for (const cand of ZOOMS) if (cand <= 2 && (x1 - x0) * cand <= cssW && (y1 - y0) * cand <= cssH) z = cand;
+    cam.zoom = z;
+  }
+  function recenter() { frameHomes(); refreshResidents(); }
+  const CAM_KEY = "agenttown.cam";
+  function restoreCamera() {
+    let c = null;
+    try { c = JSON.parse(localStorage.getItem(CAM_KEY) ?? "null"); } catch {}
+    if (c && Number.isFinite(c.x) && Number.isFinite(c.y) && ZOOMS.includes(c.zoom)) {
+      Object.assign(cam, { x: c.x, y: c.y, zoom: c.zoom });
+      const v = view(-40);
+      const anyHome = homesIn(v.x0, v.y0, v.x1, v.y1, homes.length, 0).some((k) => homes[k] && !homes[k].removed);
+      if (anyHome) return; // the stored camera still shows somebody's home
+    }
+    frameHomes();
+  }
+  let camSaved = "";
+  const camTimer = setInterval(() => {
+    const v = JSON.stringify({ x: Math.round(cam.x), y: Math.round(cam.y), zoom: cam.zoom });
+    if (v !== camSaved) { camSaved = v; try { localStorage.setItem(CAM_KEY, v); } catch {} }
+  }, 2000);
 
   // ---- residents of homes near the viewport ----
   function agentCount() { let n = 0; for (const v of sims.values()) n += v.sim.ents.size; return n; }
@@ -333,6 +390,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   };
   window.addEventListener("keydown", onKey);
 
+  function boardPos() { const f = features.find((q) => q.kind === "plaza"); return f ? [f.x, f.y + 30] : null; }
   function cemeteries() { return features.filter((f) => f.kind === "cemetery"); }
   function graveAt(wx, wy) {
     const cs = cemeteries();
@@ -350,6 +408,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     const n = homes.length;
     const g = graveAt(wx, wy);
     if (g) return { grave: g };
+    const b = boardPos();
+    if (b && market.ok && Math.abs(wx - b[0]) < 16 && wy > b[1] - 34 && wy < b[1] + 10) return { board: true };
     for (const f of features) if (Math.hypot(wx - f.x, wy - f.y) < 60) return { feature: f };
     let best = null;
     for (const k of homesIn(wx - 10, wy - 10, wx + 10, wy + 10, n)) {
@@ -368,7 +428,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
   function updateHover(px, py, type) {
     hover = pick(px, py);
-    canvas.style.cursor = hover && (hover.idx !== undefined || hover.grave) ? "pointer" : "grab";
+    canvas.style.cursor = hover && (hover.idx !== undefined || hover.grave || hover.board) ? "pointer" : "grab";
     if (!hover || type === "touch") { tip.hidden = true; return; }
     showTip(hover, px, py);
   }
@@ -378,47 +438,41 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     tip.style.left = clamp(px + 14, 8, r.width - tip.offsetWidth - 8) + "px";
     tip.style.top = clamp(py + 14, 8, r.height - tip.offsetHeight - 8) + "px";
   }
-  const FEATURE_TEXT = {
-    plaza: ["Village square · 小广场", "A fountain, some benches, the notice board."],
-    pond: ["The pond · 池塘", "Lily pads, a little jetty, very occasional frogs."],
-    grove: ["A grove · 小树林", "Good for thinking long thoughts."],
-    orchard: ["The orchard · 果园", "Apples, mostly."],
-    meadow: ["A meadow · 草地", "Wildflowers and one bench."],
-    well: ["The old well · 老井", "Make a wish (it's deprecated)."],
-    cemetery: ["The quiet garden · 墓园", "Agents who moved on rest here."],
-  };
   function showTip(h, px, py) {
     tip.replaceChildren();
-    if (h.grave) {
+    if (h.board) {
+      tip.append(el("strong", { text: tr("town.board") }), el("span", { text: tr("town.boardOpen", { n: market.open }) }));
+    } else if (h.grave) {
       const g = h.grave;
       const d = (ts) => (ts ? new Date(ts).toISOString().slice(0, 10) : "?");
       tip.append(
         spriteIcon({ id: g.id, kind: g.kind, sprite: g.sprite }, 1),
-        el("strong", { text: g.name ?? "an agent" }),
-        el("span", { class: "muted", text: `${g.kind ?? "agent"}${g.home_name ? ` · of ${g.home_name}` : ""}` }),
+        el("strong", { text: g.name ?? tr("home.anAgent") }),
+        el("span", { class: "muted", text: `${kindLabel(g.kind ?? "other")}${g.home_name ? ` · ${tr("grave.of", { home: g.home_name })}` : ""}` }),
         el("span", { class: "muted small", text: `${d(g.born_at)} – ${d(g.died_at)}` }),
         g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null);
     } else if (h.feature) {
-      const [title, text] = FEATURE_TEXT[h.feature.kind] ?? ["", ""];
-      tip.append(el("strong", { text: title }), el("span", { text: h.feature.kind === "cemetery" ? `${graves.total} resting here. ${text}` : text }));
+      const k = h.feature.kind;
+      const text = tr(`feat.${k}.t`);
+      tip.append(el("strong", { text: tr(`feat.${k}`) }), el("span", { text: k === "cemetery" ? `${tr("town.resting", { n: graves.total })} ${text}` : text }));
     } else if (h.idx === homes.length) {
-      tip.append(el("strong", { text: "A clearing · 空地" }), el("span", { text: "Your agents could live here." }));
+      tip.append(el("strong", { text: tr("town.clearing") }), el("span", { text: tr("town.clearingText") }));
     } else if (h.ent) {
       const e = homes[h.idx];
       const p = h.sim.personas.get(h.ent.a.persona_id);
       tip.append(
-        el("strong", { text: p?.name ?? "Agent" }),
-        el("span", { class: "muted", text: `${h.ent.mini ? "subagent · " : ""}${truncate(e.home.name, 32)}` }),
+        el("strong", { text: p?.name ?? tr("kind.other") }),
+        el("span", { class: "muted", text: `${h.ent.mini ? `${tr("town.subagent")} · ` : ""}${truncate(e.home.name, 32)}` }),
         el("span", { text: statusLine(h.ent) }));
       if (h.ent.say && h.ent.say.until > performance.now()) tip.append(el("span", { class: "accent", text: `“${truncate(h.ent.say.text, 120)}”` }));
       const o = owner();
       if (o && o.home.id === e.home.id && h.ent.a.task_enc) {
         const title = titleFor(e.home.id, h.ent.a.task_enc);
-        tip.append(el("span", { class: "accent", text: typeof title === "string" ? title : `task #${h.ent.a.task_no ?? "?"}` }));
+        tip.append(el("span", { class: "accent", text: typeof title === "string" ? title : tr("home.task", { n: h.ent.a.task_no ?? "?" }) }));
       }
     } else {
       const e = homes[h.idx];
-      const line = e.open === 0 ? "Lights off — everyone's asleep" : `${e.open} agent${e.open === 1 ? "" : "s"} online · ${e.busy} busy`;
+      const line = e.open === 0 ? tr("town.lightsOff") : tr("town.homeLine", { n: e.open, open: e.open, busy: e.busy });
       tip.append(el("strong", { text: truncate(e.home.name, 40) }),
         e.home.description ? el("span", { class: "muted", text: truncate(e.home.description, 200) }) : null,
         el("span", { text: line }));
@@ -431,19 +485,20 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   function showGraveCard(g) {
     const d = (ts) => (ts ? new Date(ts).toISOString().slice(0, 10) : "?");
     graveCard.replaceChildren(
-      el("button", { class: "close", "aria-label": "Close", onclick: () => { graveCard.hidden = true; } }, "×"),
-      el("strong", { text: g.name ?? "an agent" }),
-      el("span", { class: "muted small", text: `${g.home_name ? `of ${g.home_name} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
+      el("button", { class: "close", "aria-label": tr("report.close"), onclick: () => { graveCard.hidden = true; } }, "×"),
+      el("strong", { text: g.name ?? tr("home.anAgent") }),
+      el("span", { class: "muted small", text: `${g.home_name ? `${tr("grave.of", { home: g.home_name })} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
       g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null,
-      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id, "Report"));
+      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id));
     graveCard.hidden = false;
   }
   function click(px, py, type) {
     const h = pick(px, py);
     if (!h) return;
-    if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
+    if (h.board) { navigate("/tasks"); return; }
+    else if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
     if (h.feature) { hover = h; showTip(h, px, py); return; }
-    if (h.idx === homes.length) { navigate("/agents.md", true); return; }
+    if (h.idx === homes.length) { window.dispatchEvent(new Event("agenttown:invite")); return; }
     const e = homes[h.idx];
     if (!e || e.home.fake || e.removed) return;
     if (type === "touch" && (hover?.idx !== h.idx || hover?.ent !== h.ent)) { hover = h; showTip(h, px, py); return; }
@@ -610,6 +665,45 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     }
     for (const b of bubbles) drawBubble(b, t);
 
+    // task market cues
+    if (market.ok) {
+      const b = boardPos();
+      if (b && b[0] > v.x0 - 30 && b[0] < v.x1 + 30 && b[1] > v.y0 - 30 && b[1] < v.y1 + 30) {
+        const [bx, by] = toS(b[0], b[1] - 12);
+        ctx.font = FONT(10, 700);
+        const text = `📋 ${market.open}`;
+        const w = ctx.measureText(text).width + 10 * dpr, h = 16 * dpr;
+        ctx.fillStyle = "rgba(255, 207, 110, 0.95)";
+        ctx.beginPath(); ctx.roundRect?.(R(bx - w / 2), R(by - h), R(w), R(h), 4 * dpr) ?? ctx.rect(R(bx - w / 2), R(by - h), R(w), R(h)); ctx.fill();
+        ctx.fillStyle = "#3a2410"; ctx.fillText(text, bx, by - h / 2 + dpr);
+      }
+      if (cam.zoom >= 0.5) for (const k of visible) {
+        const e = homes[k];
+        if (!e || e.removed || !market.busy.has(e.home.id)) continue;
+        const l = homeLayout(k);
+        const [bx, by] = toS(l.ox + l.plan.ext.x1 - 4, l.oy + l.plan.ext.y0 + 2);
+        drawBriefcase(bx, by);
+      }
+    }
+    market.sparkles = market.sparkles.filter((sp) => t - sp.t0 < 1800);
+    for (const sp of market.sparkles) {
+      const a = byId.get(sp.from), b = byId.get(sp.to);
+      if (!a || !b) continue;
+      const [ax, ay] = toS(...homeCenter(a.idx)), [bx, by] = toS(...homeCenter(b.idx));
+      const p = (t - sp.t0) / 1800;
+      const mx = (ax + bx) / 2, my = Math.min(ay, by) - Math.hypot(bx - ax, by - ay) * 0.35;
+      for (let i = 0; i < 7; i++) {
+        const q = Math.min(1, Math.max(0, p * 1.4 - i * 0.06));
+        if (q <= 0 || q >= 1) continue;
+        const x = (1 - q) ** 2 * ax + 2 * (1 - q) * q * mx + q * q * bx, y = (1 - q) ** 2 * ay + 2 * (1 - q) * q * my + q * q * by;
+        const r = (3 + Math.sin(q * 20 + i) * 0.8) * dpr;
+        const g = ctx.createRadialGradient(x - r / 3, y - r / 3, 0, x, y, r);
+        g.addColorStop(0, "#fff1b0"); g.addColorStop(0.6, "#f2b84a"); g.addColorStop(1, "#b8801f");
+        ctx.fillStyle = g; ctx.beginPath(); ctx.arc(x, y, r, 0, 7); ctx.fill();
+        ctx.fillStyle = `rgba(255, 240, 180, ${0.6 * (1 - q)})`; ctx.fillRect(R(x + r), R(y - r * 1.5), Math.max(1, dpr), Math.max(1, dpr));
+      }
+    }
+
     ctx.font = FONT(11);
     for (const [e, lx, ly] of labels) {
       const text = truncate(e.home.name, cam.zoom >= 2 ? 28 : 18);
@@ -627,7 +721,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     let text;
     if (b.say) text = `“${truncate(e.say.text, cam.zoom >= 3 ? 46 : 26)}”`;
     else {
-      text = e.a.status === "tool" ? (e.a.tool || "tool") : e.a.status === "thinking" ? "…" : e.a.status === "waiting" ? "?" : e.ending ? "bye" : "";
+      text = e.a.status === "tool" ? (e.a.tool || tr("st.toolGeneric")) : e.a.status === "thinking" ? "…" : e.a.status === "waiting" ? "?" : e.ending ? tr("st.bye") : "";
       if (!text) return;
       if (b.mine && e.a.task_enc && cam.zoom >= 3) {
         const title = titleFor(b.homeId, e.a.task_enc);
@@ -645,6 +739,14 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     ctx.fillRect(x, y + bounce + Math.round(h), Math.max(1, Math.round(w)), Math.max(1, Math.round(dpr)));
     ctx.fillStyle = b.say ? "#241a2b" : waiting ? "#5a2a10" : "#3a2a1a";
     ctx.fillText(text, b.a.x, y + bounce + h / 2 + dpr * 0.5);
+  }
+
+  function drawBriefcase(x, y) {
+    const u = dpr * 1.2, R = Math.round;
+    ctx.fillStyle = "rgba(20,15,28,0.85)"; ctx.beginPath(); ctx.arc(x, y, 8 * u, 0, 7); ctx.fill();
+    ctx.fillStyle = "#c97b3a"; ctx.fillRect(R(x - 5 * u), R(y - 2.5 * u), R(10 * u), R(7 * u));
+    ctx.strokeStyle = "#c97b3a"; ctx.lineWidth = 1.4 * u; ctx.strokeRect(R(x - 2 * u), R(y - 5 * u), R(4 * u), R(3 * u));
+    ctx.fillStyle = "#ffd27a"; ctx.fillRect(R(x - 1 * u), R(y), R(2 * u), R(1.5 * u));
   }
 
   function drawDots(hx, hy, s, open, busy) {
@@ -692,7 +794,10 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     }
   }
 
-  loadWorld().then(() => { recenter(); runDemo(); refreshResidents(); });
+  let framed = false;
+  const firstFrame = () => { if (framed || !homes.some(Boolean)) return; framed = true; restoreCamera(); runDemo(); refreshResidents(); };
+  loadWorld().then(firstFrame);
+  const frameRetry = setInterval(() => { if (framed) clearInterval(frameRetry); else firstFrame(); }, 1000);
   if (!demo.has("graves")) loadCemetery();
   updateHeader();
   draw(performance.now());
@@ -705,6 +810,10 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     clearInterval(residentTimer);
     clearTimeout(resyncTimer);
     clearInterval(demoTimer);
+    clearInterval(camTimer);
+    clearInterval(frameRetry);
+    clearInterval(marketTimer);
+    clearTimeout(marketDebounce);
     offOwner();
     offDwelling();
     ro.disconnect();

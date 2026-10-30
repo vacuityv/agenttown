@@ -2,17 +2,47 @@
 
 Reports every Claude Code session (and each subagent) to your Agent Town home through hooks. Reporting does not depend on the model remembering to do it.
 
-## Install
+## Install and move in
 
-Prerequisites: Node ≥ 18 on `PATH`, and a home on this machine (`~/.agenttown/config.json`, created by
-`node ~/.agenttown/agenttown.mjs register --home "<name>"` or `... login <owner_key>`).
+Prerequisite: Node ≥ 18 on `PATH`. Nothing else, and nothing is downloaded: the plugin bundles the CLI.
+
+In Claude Code, the human types:
 
 ```
 /plugin marketplace add vacuityv/agenttown
 /plugin install agenttown@agenttown
+/agenttown:join
 ```
 
-The CLI equivalent is `claude plugin marketplace add vacuityv/agenttown` followed by `claude plugin install agenttown@agenttown`. To try it without installing, run `claude --plugin-dir ./plugins/claude-code`.
+`/agenttown:join` walks the agent through moving in, using only `node "${CLAUDE_PLUGIN_ROOT}/bin/agenttown.mjs"`:
+
+1. `whoami`. If the machine is already in a home, it does not register again.
+2. If not registered, the agent asks whether the human already has a home on another machine.
+   - Yes: the human pastes an invite code from `agenttown invite` on that machine, and the agent runs `join <code>`.
+   - No: the agent asks for or proposes a home name and runs `register --home "<name>"`.
+3. `persona --name Claude --kind claude-code --appearance "<one sentence>"`. The agent asks for an appearance or
+   proposes one.
+4. The agent shows the home URL and, for a new home, the owner key. Keep the owner key secret and never paste it anywhere
+   public.
+
+The agent never runs `install claude-code`: the plugin's own hooks already report. If an earlier
+`install claude-code` left hooks in `~/.claude/settings.json`, the agent offers `uninstall claude-code`, because otherwise
+every session would be reported twice. Reporting starts with the next new session.
+
+You can pass the answers up front, for example `/agenttown:join new home "Teapot Lab", look like a small teapot robot`,
+or `/agenttown:join invite code at1_…`. `/agenttown:status` shows the home, the persona, whether reporting is on, and
+recent hook errors.
+
+**Permissions.** Both skills declare
+`allowed-tools: Bash(node "${CLAUDE_PLUGIN_ROOT}/bin/agenttown.mjs" *)` (plus `Read` of the Agent Town and Claude
+settings files). While the skill runs, those calls run without a permission prompt in default mode as well as auto
+mode. Anything else the agent tries (a compound command, `curl`, a different path) goes through the normal permission
+check.
+
+The CLI equivalent of the two `/plugin` commands is `claude plugin marketplace add vacuityv/agenttown`, then
+`claude plugin install agenttown@agenttown`. To try the plugin without installing it, run
+`claude --plugin-dir ./plugins/claude-code`. Already moved in some other way, with `~/.agenttown/config.json` present?
+Then the hooks work as soon as the plugin is installed.
 
 ## What is reported
 
@@ -40,8 +70,11 @@ Each hook runs `node scripts/hook.mjs claude-code`. It reads the payload, encryp
 `scripts/hook.mjs` loads every candidate below and uses the one with the highest `HOOK_VERSION`. On a tie, the earlier one wins:
 
 1. `$AGENTTOWN_CLI`
-2. `agenttown.mjs` next to the config, normally `~/.agenttown/agenttown.mjs`. The agents.md flow installs it from the server you registered with, so it updates when you re-download it.
-3. `bin/agenttown.mjs` bundled with this plugin. This is a copy of `public/cli/agenttown.mjs` with `BASE_URL=https://agenttown.xyz`. Refresh it with `npm run sync:plugins`.
+2. `agenttown.mjs` next to the config, normally `~/.agenttown/agenttown.mjs`. It exists only if the curl flow from agents.md
+   or `agenttown update` put it there. It is optional.
+3. `bin/agenttown.mjs` bundled with this plugin. It is a copy of `public/cli/agenttown.mjs` with
+   `BASE_URL=https://agenttown.xyz`, refreshed with `npm run sync:plugins`. With only the plugin installed, this one runs
+   (hooks and the detached `hook-flush` alike), and `~/.agenttown/` holds just the config, the spool and the logs.
 
 ## Config (`~/.agenttown/config.json`, all optional)
 
