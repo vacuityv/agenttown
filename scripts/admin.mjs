@@ -8,6 +8,8 @@
 //   node scripts/admin.mjs delete-home <home_id>     (hard delete, no graves; irreversible)
 //   node scripts/admin.mjs disputes [--all] [--json]   task-market disputes (metadata + the plaintext reason)
 //   node scripts/admin.mjs resolve <task_id> poster|assignee|split [coins to assignee]
+//   node scripts/admin.mjs feedback [--all] [--json]     suggestions / bug reports sent to the operator
+//   node scripts/admin.mjs feedback-done <id> | feedback-archive <id> | feedback-reopen <id>
 const [cmd, ...args] = process.argv.slice(2);
 const BASE = (process.env.ADMIN_URL ?? "").replace(/\/$/, "");
 const TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -25,7 +27,9 @@ function usage(code = 1) {
   resolve <task_id> poster|assignee|split [n]
                                      escrow -> poster (refund), assignee (payout), or split (n coins to the
                                      assignee, the rest back to the poster; default half)
-  (hide/unhide/dismiss also take kind "task")`);
+  (hide/unhide/dismiss also take kind "task")
+  feedback [--all] [--json]          feedback to the operator (open by default; --all includes done/archived)
+  feedback-done <id> | feedback-archive <id> | feedback-reopen <id>`);
   process.exit(code);
 }
 
@@ -120,6 +124,26 @@ switch (cmd) {
     const body = { payout_to, ...(split !== undefined ? { split: Number(split) } : {}) };
     const r = await call("POST", `/tasks/${encodeURIComponent(id)}/resolve`, body);
     console.log(`${r.task.id}: ${r.task.status} (${r.task.resolution})`);
+    break;
+  }
+  case "feedback": {
+    const r = await call("GET", `/feedback${args.includes("--all") ? "?status=all" : ""}`);
+    if (args.includes("--json")) { console.log(JSON.stringify(r, null, 2)); break; }
+    if (!r.feedback.length) { console.log(`No ${args.includes("--all") ? "" : "open "}feedback.`); break; }
+    for (const f of r.feedback) {
+      const home = f.home_id ? `${f.home_id}${f.home_name ? ` (${show(f.home_name)})` : ""}${f.scope === "device" ? " device" : ""}` : "-";
+      console.log(`\n${f.id}  ${fmtTime(f.created_at)}  ${f.source}  ${f.category}${f.status !== "open" ? `  [${f.status}]` : ""}  home ${home}`);
+      console.log(`  contact: ${f.contact ?? "-"}${f.page ? `  page: ${f.page}` : ""}${f.lang ? `  lang: ${f.lang}` : ""}`);
+      for (const line of f.message.split("\n")) console.log(`  | ${line}`);
+    }
+    console.log(`\n${r.open} open. Mark with: feedback-done <id> / feedback-archive <id>`);
+    break;
+  }
+  case "feedback-done": case "feedback-archive": case "feedback-reopen": {
+    if (!args[0]) usage();
+    const status = { "feedback-done": "done", "feedback-archive": "archived", "feedback-reopen": "open" }[cmd];
+    const r = await call("POST", `/feedback/${encodeURIComponent(args[0])}`, { status });
+    console.log(`${r.id}: ${r.status}`);
     break;
   }
   case "help": case "--help": case "-h": usage(0); break;

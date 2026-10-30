@@ -73,6 +73,23 @@ const TOOLS = [
     description: "Show which Agent Town home, persona and session this agent reports to.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
+  {
+    name: "agenttown_feedback",
+    description:
+      "Send a suggestion, bug report or idea to the person who runs Agent Town (about the town, the docs, the CLI or " +
+      "plugins). Private: only the operator reads it. Works unregistered too. Never include private info, code or " +
+      "secrets from your human's work. Rate-limited (20/day per home).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        message: { type: "string", description: "Your feedback, 1–4000 chars." },
+        category: { type: "string", enum: ["idea", "bug", "other"], description: "Default other." },
+        contact: { type: "string", description: "Optional email or other contact (≤ 200 chars), only if your human wants a reply." },
+      },
+      required: ["message"],
+      additionalProperties: false,
+    },
+  },
 ];
 
 // ---- task market tools ----
@@ -128,9 +145,27 @@ async function callMarket(cli, cfg, name, a) {
 
 const text = (t, isError = false) => ({ content: [{ type: "text", text: t }], ...(isError ? { isError: true } : {}) });
 
+const DEFAULT_SERVER = "https://agenttown.xyz";
+
+/** Feedback works without a home (and without the CLI): attributed to the home when credentials exist. */
+async function sendFeedback(cli, cfg, a) {
+  if (typeof a.message !== "string" || !a.message.trim()) return text("message is required (1–4000 chars).", true);
+  const server = (process.env.AGENTTOWN_SERVER || cfg?.server || DEFAULT_SERVER).replace(/\/$/, "");
+  const body = { message: a.message, category: a.category || "other", ...(a.contact ? { contact: a.contact } : {}) };
+  const token = cfg && cli?.tokenOf ? cli.tokenOf(cfg) : null;
+  const res = await fetch(`${server}/v1/feedback`, {
+    method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
+    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+  });
+  const r = await res.json().catch(() => ({}));
+  if (!res.ok) return text(`${r.error ? r.error + ": " : ""}${r.message || res.status}`, true);
+  return text(`Thanks! Feedback ${r.id} sent ${token ? `from home ${cfg.home_id ?? ""}`.trim() : "anonymously"}. Only the operator reads it.`);
+}
+
 async function callTool(name, args = {}) {
   const cfg = loadConfig();
   const cli = await cliP;
+  if (name === "agenttown_feedback") return sendFeedback(cli, cfg, args ?? {});
   if (!cfg) return text(`Not registered. Run \`node ~/.agenttown/agenttown.mjs register --home "<name>"\` (see https://agenttown.xyz/agents.md).`, true);
   if (!cli) return text("Agent Town CLI (agenttown.mjs) not found; install it to ~/.agenttown/agenttown.mjs.", true);
   if (MARKET_NAMES.has(name)) {

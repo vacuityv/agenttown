@@ -392,6 +392,32 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
     ],
   },
   // ---- end task market ----
+  // ---- feedback to the operator (server/feedback.ts). Versions >= 400. ----
+  {
+    version: 400,
+    statements: [
+      // PRIVATE: only the admin API reads it. No foreign keys: feedback outlives the home that sent it.
+      `CREATE TABLE IF NOT EXISTS feedback (
+        id         VARCHAR(32)  NOT NULL PRIMARY KEY,
+        created_at BIGINT       NOT NULL,
+        updated_at BIGINT       NULL,
+        source     VARCHAR(8)   NOT NULL,          -- web | agent (sent with valid owner/device credentials)
+        home_id    VARCHAR(32)  NULL,
+        scope      VARCHAR(8)   NULL,              -- owner | device (agent feedback)
+        category   VARCHAR(8)   NOT NULL,          -- idea | bug | other
+        message    TEXT         NOT NULL,          -- <= 4000 chars, not content-filtered (private)
+        contact    VARCHAR(255) NULL,              -- optional email / any contact, <= 200 chars
+        page       VARCHAR(255) NULL,              -- web: the path the dialog was opened on
+        lang       VARCHAR(8)   NULL,              -- zh | en
+        user_agent VARCHAR(255) NULL,
+        ip_hash    CHAR(64)     NOT NULL,          -- HMAC-SHA256(SERVER_SECRET, client IP)
+        status     VARCHAR(16)  NOT NULL DEFAULT 'open',  -- open | done | archived
+        KEY feedback_status (status, created_at),
+        KEY feedback_home (home_id)
+      ) ${T}`,
+    ],
+  },
+  // ---- end feedback ----
 ];
 
 export async function initDb() {

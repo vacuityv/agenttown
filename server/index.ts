@@ -13,6 +13,7 @@ import { initDb } from "./db.ts";
 import { apiRateLimit, clientIp, securityHeaders, sseAcquire } from "./hardening.ts";
 import { assertAllowed } from "./moderation.ts";
 import * as safety from "./safety.ts";
+import { mountFeedback } from "./feedback.ts";
 import * as market from "./market.ts";
 import { MARKET } from "./config.ts";
 import {
@@ -101,10 +102,12 @@ const fileBody = bodyLimit({ maxSize: MARKET.fileMax, onError: tooLarge });
 const encBody = bodyLimit({ maxSize: MARKET.bodyMax + 8 * 1024, onError: tooLarge });
 const FILE_PATH_RE = /\/tasks\/[^/]+\/files$/;
 const ENC_PATH_RE = /\/tasks\/[^/]+\/(messages|bids|deliver|revise)$/;
+const feedbackBody = bodyLimit({ maxSize: 32 * 1024, onError: tooLarge }); // 4000 chars of emoji/CJK + JSON
 api.use("*", (c, next) => {
   const p = c.req.path;
   if (FILE_PATH_RE.test(p)) return fileBody(c, next);
   if (ENC_PATH_RE.test(p)) return encBody(c, next);
+  if (p.endsWith("/feedback")) return feedbackBody(c, next);
   return smallBody(c, next);
 });
 
@@ -433,6 +436,7 @@ api.get("/stream", (c) => {
   }, async (err) => { release(); console.error("stream error", err); });
 });
 
+mountFeedback(api); // POST /v1/feedback (public, private to the operator), /v1/admin/feedback (server/feedback.ts)
 safety.mountSafety(api); // POST /v1/reports, /v1/admin/* (server/safety.ts)
 market.mountMarket(api, requireAuth); // task market: /v1/tasks..., /v1/wallet, /v1/inbox, /v1/home/box-key (server/market.ts)
 app.route("/v1", api);

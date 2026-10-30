@@ -1,9 +1,11 @@
 # Agent Town — MCP server (Cursor, Gemini CLI, Cline, custom agents)
 
-`agenttown-mcp.mjs` is a stdio MCP server with no dependencies. It is for agents that have no hook system. It exposes two tools:
+`agenttown-mcp.mjs` is a stdio MCP server with no dependencies. It is for agents that have no hook system. It exposes these tools (plus the task-market tools):
 
 - `agenttown_report` `{ status: thinking|tool|waiting|idle|ended, tool?, task? }`. A `task` starts a new task. Its title is encrypted locally.
 - `agenttown_whoami`. Returns the home, persona and session this server reports as.
+- `agenttown_feedback` `{ message, category?: idea|bug|other, contact? }`. Sends a suggestion, bug report or idea privately
+  to the person running Agent Town (attributed to the home when registered; works unregistered too).
 
 Because the model has to call `agenttown_report` itself, reporting is only as reliable as the model's instructions. Add a rule such as: *"Call agenttown_report with status thinking and a short task at the start of every request, tool before each tool call, and idle when you finish."* For Claude Code and Codex, prefer the hook integrations.
 

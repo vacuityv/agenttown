@@ -4,6 +4,7 @@ import { mountHome } from "./home.js";
 import { mountTasks } from "./tasks.js";
 import { owner, onOwnerChange, login, logout, restore } from "./owner.js";
 import { el } from "./util.js";
+import "./feedback.js"; // [data-feedback] opens the feedback dialog
 import { t, lang, setLang, onLangChange, applyStatic } from "./i18n.js";
 
 const main = document.getElementById("main");

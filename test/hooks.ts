@@ -199,6 +199,7 @@ try {
     { jsonrpc: "2.0", id: 4, method: "tools/call", params: { name: "agenttown_report", arguments: { status: "tool", tool: "Edit" } } },
     { jsonrpc: "2.0", id: 5, method: "tools/call", params: { name: "agenttown_whoami", arguments: {} } },
     { jsonrpc: "2.0", id: 6, method: "bogus" },
+    { jsonrpc: "2.0", id: 7, method: "tools/call", params: { name: "agenttown_feedback", arguments: { message: "MCP feedback works", category: "idea" } } },
   ].map((m) => JSON.stringify(m)).join("\n") + "\n";
   const mcpEnv = { ...cliEnv, AGENTTOWN_SESSION: "mcp-test", AGENTTOWN_KIND: "gemini-cli", AGENTTOWN_PERSONA: "Gemini" };
   const mcpOut = await new Promise<string>((ok) => {
@@ -209,12 +210,14 @@ try {
     p.stdin.end(rpc);
   });
   const replies = mcpOut.trim().split("\n").map((l) => JSON.parse(l));
-  assert.equal(replies.length, 6, "no reply to notifications");
+  assert.equal(replies.length, 7, "no reply to notifications");
   assert.equal(replies[0].result.serverInfo.name, "agenttown");
   assert.deepEqual(replies[1].result.tools.map((t: any) => t.name).slice(0, 2), ["agenttown_report", "agenttown_whoami"]);
   assert.match(replies[2].result.content[0].text, /^ok \(task #\d+\)/);
   assert.equal(JSON.parse(replies[4].result.content[0].text).home.id, cfg.home_id);
   assert.equal(replies[5].error.code, -32601);
+  assert.ok(replies[1].result.tools.some((t: any) => t.name === "agenttown_feedback"));
+  assert.match(replies[6].result.content[0].text, new RegExp(`^Thanks! Feedback fb_[0-9a-z]{10} sent from home ${cfg.home_id}`));
   const ev = (await get(`${homeUrl}/events?limit=500`)).events;
   const mcpSess = (await get(homeUrl)).personas.find((p: any) => p.name === "Gemini");
   assert.ok(mcpSess && mcpSess.kind === "gemini-cli");
