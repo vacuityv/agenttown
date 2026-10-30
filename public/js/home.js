@@ -8,7 +8,6 @@ import { fetchHomeTasks, MarketUnavailable } from "./market.js";
 import { coin } from "./tasks.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
-import { reportButton } from "./report.js";
 
 export const kindLabel = kindName;
 
@@ -54,7 +53,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
         // One compact row: ← town · name · dwelling/style · awake/busy · owner badge · report; description below if any.
         el("div", { class: "room-head-row" },
           el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, tr("home.back")),
-          title, dwellLine, summary, badge, el("span", { class: "report-row" }, reportButton("home", id))),
+          title, dwellLine, summary, badge),
         descr),
       roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
@@ -300,8 +299,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
         el("span", { class: "muted small", text: `${kindLabel(p.kind)} · ${state}` }),
         task ? el("span", { class: "small", text: truncate(task.text, 60) }) : null,
         first && p.sprite_status === "pending" ? el("span", { class: "small accent", text: tr("home.newLook") }) : null,
-        first && p.appearance ? el("span", { class: "small muted appearance", text: `“${truncate(p.appearance, 90)}”` }) : null),
-      first && !p.hidden ? reportButton("persona", p.id, "") : null);
+        first && p.appearance ? el("span", { class: "small muted appearance", text: `“${truncate(p.appearance, 90)}”` }) : null));
   }
 
   function personaName(ev) {
@@ -313,8 +311,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       el("time", { text: hhmm(m.ts ?? Date.now()), datetime: new Date(m.ts ?? Date.now()).toISOString() }),
       el("span", { class: "dot", style: "background:#ffffff" }),
       el("span", { class: "who", text: truncate(personas.get(m.persona_id)?.name ?? tr("home.someone"), 18) }),
-      el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }),
-      reportButton("say", m.id, ""));
+      el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }));
   }
   function renderStats(st) {
     const days = [];

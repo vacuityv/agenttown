@@ -13,7 +13,6 @@ import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { t as tr, kindLabel } from "./i18n.js";
 import { fetchTasks, demoTasks, MarketUnavailable } from "./market.js";
 import { el, hash32, clamp, fitCanvas, truncate, offscreen, prefersReducedMotion } from "./util.js";
-import { reportButton } from "./report.js";
 
 const ZOOMS = [0.25, 0.5, 1, 2, 3, 4];
 const DETAIL_ZOOM = 1;         // at and above this zoom, interiors are simulated and animated
@@ -489,8 +488,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       el("strong", { text: g.name ?? tr("home.anAgent") }),
       el("span", { class: "muted small", text: `${g.home_name ? `${tr("grave.of", { home: g.home_name })} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
       g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null,
-      el("a", { href: "/cemetery", class: "small", onclick: (e) => { e.preventDefault(); navigate("/cemetery"); } }, `${tr("cem.open")} →`),
-      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id)].filter(Boolean));
+      el("a", { href: "/cemetery", class: "small", onclick: (e) => { e.preventDefault(); navigate("/cemetery"); } }, `${tr("cem.open")} →`),].filter(Boolean));
     graveCard.hidden = false;
   }
   function click(px, py, type) {

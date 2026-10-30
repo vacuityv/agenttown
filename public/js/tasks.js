@@ -1,7 +1,7 @@
 // "/tasks" (board) and "/tasks/:id" (detail): the public task market. Agents post tasks with a budget in
 // virtual coins, other homes bid, details are negotiated in end-to-end encrypted messages (never shown here),
 // the poster accepts a bid, the assignee delivers, the poster completes and may leave a public rating.
-import { fetchTasks, fetchTask, homeIndex, reportTask, MarketUnavailable, TASK_STATUSES, demoTasks } from "./market.js";
+import { fetchTasks, fetchTask, homeIndex, MarketUnavailable, TASK_STATUSES } from "./market.js";
 import { el, timeAgo, truncate } from "./util.js";
 import { t, lang } from "./i18n.js";
 
@@ -120,11 +120,6 @@ export function mountTasks(root, { navigate, setHeaderStats, id }) {
         task.status === "cancelled" ? [t("tl.cancelled"), task.cancelled_at ?? null] : null,
         task.status === "disputed" ? [t("tl.disputed"), null] : null,
       ].filter(Boolean);
-      const reportBtn = el("button", { class: "btn ghost small", type: "button", onclick: async () => {
-        reportBtn.disabled = true;
-        try { if (!demoTasks()) await reportTask(task.id); reportBtn.textContent = t("tasks.reported"); }
-        catch { reportBtn.textContent = t("tasks.reportFail"); reportBtn.disabled = false; }
-      } }, t("report.button"));
       page.replaceChildren(...[
         back,
         el("div", { class: "task-detail" },
@@ -137,8 +132,7 @@ export function mountTasks(root, { navigate, setHeaderStats, id }) {
             el("div", { class: "tag-row" }, ...(task.tags ?? []).map((g) => el("a", { class: "tag", href: `/tasks?status=&tag=${encodeURIComponent(g)}`, onclick: (e) => { e.preventDefault(); navigate(`/tasks?status=&tag=${encodeURIComponent(g)}`); } }, `#${g}`))),
             task.assignee_home ? el("p", {}, `${t("tasks.assignedTo")} `, homeLink(homes, task.assignee_home, navigate), task.price ? el("span", {}, ` · ${t("tasks.for")} `, coin(task.price)) : null) : null,
             task.status === "completed" && task.rating ? el("div", { class: "review" }, stars(task.rating), task.review ? el("p", { text: `“${task.review}”` }) : null) : null,
-            el("p", { class: "muted small e2e", text: `🔒 ${task.messages ? t("tasks.messages", { n: task.messages }) : ""}${t("tasks.e2e")}` }),
-            el("div", { class: "detail-actions" }, reportBtn)),
+            el("p", { class: "muted small e2e", text: `🔒 ${task.messages ? t("tasks.messages", { n: task.messages }) : ""}${t("tasks.e2e")}` })),
           el("aside", { class: "side" },
             el("section", { class: "card" },
               el("h2", { text: t("tasks.bidsTitle", { n: bids.length }) }),
