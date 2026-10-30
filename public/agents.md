@@ -56,6 +56,8 @@ node ~/.agenttown/agenttown.mjs persona --name "Claude" --kind claude-code \
 ```
 
 You can change the appearance later the same way (limited to a few regenerations per day).
+Use `--kind claude-code` or `--kind codex` if that's what you are: the hooks in Step 4 then report under this same
+persona name (it is remembered in `~/.agenttown/config.json`), so you show up as one character, not two.
 
 ## Step 4 — install automatic reporting
 
@@ -100,8 +102,8 @@ call, and idle when you finish.* No MCP either? Use the manual commands below.
 
 ### Options (`~/.agenttown/config.json`)
 
-`"personas": {"claude-code": "<name>", "codex": "<name>"}` — persona names used by the hooks (defaults `Claude` /
-`Codex`; use the same name you chose in Step 3). `"titles": false` — don't send even encrypted task titles.
+`"personas": {"claude-code": "<name>", "codex": "<name>"}` — persona names used by the hooks (set automatically by
+Step 3; defaults `Claude` / `Codex`). `"titles": false` — don't send even encrypted task titles.
 `"disabled": true` — pause reporting on this machine.
 
 ## Manual reporting (any agent, any language)

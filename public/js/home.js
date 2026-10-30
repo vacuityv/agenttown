@@ -1,15 +1,10 @@
-// "/h/:id" — a Home interior. Each open top-level session gets a desk; subagents sit at small side
-// tables next to their parent as ~60% minis. Live via SSE /v1/stream?home=<id>.
+// "/h/:id" — one Home, up close. Same top-down interior as the town (shared HomeSim renderer), drawn
+// bigger, with speech bubbles (task titles decrypted locally for the owner), side panel and stats.
 import { api, openStream } from "./api.js";
-import {
-  STATION_W, STATION_H, WALL_H, ROOM_PAD, CHAR_DX, CHAR_DY, PAL,
-  roomBackground, drawChair, drawDesk, drawMiniTable, drawMiniLaptop,
-} from "./art.js";
-import { sheetFor, frameFor, spriteIcon } from "./sprites.js";
+import { HomeSim, HOUSE_W, HOUSE_H, WALL, statusLine, SPOT_LABEL } from "./interior.js";
+import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
-import { el, hash32, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
-
-const SPAWN_MS = 380, DESPAWN_MS = 480, MINI_SLOTS = 4;
+import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
 
 export const kindLabel = (k) =>
   k === "claude-code" ? "Claude Code" : k === "codex" ? "Codex" : k ? k.charAt(0).toUpperCase() + k.slice(1) : "Agent";
@@ -22,16 +17,18 @@ function statusText(s) {
   return "idle";
 }
 const STATUS_COLOR = { tool: "#ffcf6e", thinking: "#8bd3c7", waiting: "#ff9bb3", idle: "#9a8fb5", ended: "#6e6680" };
+const MARGIN = 6; // art px around the house
 
 export function mountHome(root, { id, navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
   const title = el("h1", { class: "home-name", text: "…" });
   const summary = el("p", { class: "home-summary muted" });
   const badge = el("p", { class: "owner-badge", hidden: true });
-  const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": "Home interior" });
+  const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": "Home interior, seen from above" });
   const tip = el("div", { class: "tip", hidden: true });
   const roomWrap = el("div", { class: "room-wrap" }, canvas, tip);
-  const emptyNote = el("p", { class: "empty-note", hidden: true, text: "Nobody's at their desk right now · 大家都下班了" });
+  const emptyNote = el("p", { class: "empty-note", hidden: true, text: "Everyone's asleep right now · 大家都睡了" });
+  const legend = el("p", { class: "legend muted small", text: "Desk: thinking & coding · Terminal: Bash · Bookshelf: Read/Grep · Writing table: Edit/Write · Radio: Web · Crates: MCP · Sofa: resting · Bed: asleep · Door: needs you" });
   const personaList = el("ul", { class: "persona-list" });
   const timeline = el("ol", { class: "timeline" });
   const statsBox = el("div", { class: "stats" }, el("p", { class: "muted small", text: "Loading…" }));
@@ -41,7 +38,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       el("div", { class: "room-head" },
         el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, "← Town"),
         title, summary, badge),
-      roomWrap, emptyNote),
+      roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
       el("section", { class: "card" }, el("h2", { text: "Residents · 住户" }), personaList),
       el("section", { class: "card" }, el("h2", { text: "Last 14 days" }), statsBox),
@@ -51,35 +48,29 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   root.append(page);
 
   let home = null;
-  const personas = new Map();
+  const sim = new HomeSim(id);
+  const personas = sim.personas;
   const sessions = new Map();      // open sessions by id
-  const entities = new Map();      // id -> { id, s, born, died, seed }
   const seenSessions = new Map();  // id -> persona_id (incl. ended) for the timeline
-  const slotOf = new Map();        // top-level session id -> desk slot
   let live = "connecting";
-  let dead = false, raf = 0;
+  let dead = false, raf = 0, lastT = performance.now();
   const isMine = () => owner()?.home?.id === id;
 
   // ---------- data ----------
 
   function upsertPersona(p) {
-    personas.set(p.id, p);
+    sim.upsertPersona(p);
     schedulePanel();
   }
 
   function applySession(s, animate) {
-    const now = performance.now();
     seenSessions.set(s.id, s.persona_id);
-    let ent = entities.get(s.id);
-    if (s.status === "ended") {
-      sessions.delete(s.id);
-      if (ent && !ent.died) { ent.died = now; ent.s = { ...ent.s, status: "ended" }; }
-    } else {
+    if (s.status === "ended") sessions.delete(s.id);
+    else {
       sessions.set(s.id, s);
-      if (!ent) entities.set(s.id, (ent = { id: s.id, s, born: animate ? now : -1e9, died: 0, seed: hash32(s.id) % 10007 }));
-      else { ent.s = s; if (ent.died) { ent.died = 0; ent.born = now; } }
       if (!personas.has(s.persona_id)) scheduleReload();
     }
+    sim.upsertAgent(s, animate);
     schedulePanel();
   }
 
@@ -87,12 +78,12 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     try {
       const r = await api(`/homes/${encodeURIComponent(id)}`);
       home = r.home;
-      personas.clear();
-      for (const p of r.personas) personas.set(p.id, p);
+      const first = !sessions.size && !sim.ents.size;
+      sim.setPersonas(r.personas);
       const open = new Set(r.sessions.map((s) => s.id));
-      for (const [sid, ent] of entities) if (!open.has(sid) && !ent.died) applySession({ ...ent.s, status: "ended" }, true);
-      const first = entities.size === 0;
-      for (const s of r.sessions) applySession(s, !first);
+      for (const sid of [...sessions.keys()]) if (!open.has(sid)) applySession({ ...sessions.get(sid), status: "ended" }, true);
+      if (first) { sim.setAgents(r.sessions); for (const s of r.sessions) { sessions.set(s.id, s); seenSessions.set(s.id, s.persona_id); } }
+      else for (const s of r.sessions) applySession(s, true);
       renderHead();
       schedulePanel();
     } catch (e) {
@@ -137,7 +128,6 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   });
   const statsTimer = setInterval(loadStats, 60_000);
   const offOwner = onOwnerChange(() => { renderHead(); schedulePanel(); });
-
   // ---------- header / side panel ----------
 
   function renderHead() {
@@ -147,8 +137,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     let open = 0, busy = 0, subs = 0;
     for (const s of sessions.values()) { open++; if (BUSY.has(s.status)) busy++; if (s.parent_id) subs++; }
     summary.textContent = open
-      ? `${open - subs} at desks${subs ? ` + ${subs} subagent${subs === 1 ? "" : "s"}` : ""} · ${busy} busy`
-      : "Lights off — nobody home.";
+      ? `${open - subs} awake${subs ? ` + ${subs} subagent${subs === 1 ? "" : "s"}` : ""} · ${busy} busy`
+      : "Lights off — everyone's asleep.";
     emptyNote.hidden = open > 0;
     setHeaderStats([["open", open, "online"], ["busy", busy, "busy"]], live);
     const mine = isMine();
@@ -171,7 +161,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     }
     const items = [...personas.values()].map((p) => {
       const c = counts.get(p.id);
-      const state = c ? (c.busy ? `working · ${c.open} open` : `at desk · ${c.open} open`) : "off duty";
+      const state = c ? (c.busy ? `working · ${c.open} open` : `awake · ${c.open} open`) : "asleep";
       return el("li", { class: c ? "on" : "off" },
         spriteIcon(p, 1.5),
         el("div", {},
@@ -239,180 +229,64 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       tools.length ? toolList : el("p", { class: "muted small", text: "No tool calls yet." }));
   }
 
-  // ---------- layout ----------
-
-  let W = 0, H = 0, dpr = 1, S = 2, cols = 2, rows = 1, bg = null, bgKey = "";
-
-  function topOf(ent) {
-    let s = ent.s, guard = 0;
-    while (s.parent_id && entities.has(s.parent_id) && guard++ < 6) s = entities.get(s.parent_id).s;
-    return s.id;
-  }
-
-  function layout() {
-    const now = performance.now();
-    // drop finished despawns
-    for (const [sid, ent] of entities) {
-      if (ent.died && now - ent.died > DESPAWN_MS) { entities.delete(sid); slotOf.delete(sid); }
-    }
-    const tops = [], kids = new Map();
-    for (const ent of entities.values()) {
-      const top = topOf(ent);
-      if (top === ent.id) tops.push(ent);
-      else { if (!kids.has(top)) kids.set(top, []); kids.get(top).push(ent); }
-    }
-    const used = new Set(slotOf.values());
-    for (const ent of tops) {
-      if (slotOf.has(ent.id)) continue;
-      let k = 0; while (used.has(k)) k++;
-      slotOf.set(ent.id, k); used.add(k);
-    }
-    for (const sid of [...slotOf.keys()]) if (!entities.has(sid) || topOf(entities.get(sid)) !== sid) slotOf.delete(sid);
-    const maxSlot = Math.max(-1, ...slotOf.values());
-    const need = Math.max(1, maxSlot + 1);
-
-    const avail = Math.max(200, roomWrap.clientWidth);
-    let fit = 1;
-    for (let c = 6; c >= 1; c--) if ((c * STATION_W + ROOM_PAD * 2) * 2 <= avail) { fit = c; break; }
-    cols = clamp(Math.max(need, 2), 1, fit);
-    rows = Math.max(1, Math.ceil(need / cols));
-    const roomW = cols * STATION_W + ROOM_PAD * 2;
-    const roomH = WALL_H + rows * STATION_H + ROOM_PAD;
-    dpr = window.devicePixelRatio || 1;
-    S = clamp(Math.floor((avail * dpr) / roomW), 1, Math.round(3 * dpr));
-    fitCanvas(canvas, (roomW * S) / dpr, (roomH * S) / dpr);
-    W = canvas.width; H = canvas.height;
-    const key = `${cols}x${rows}`;
-    if (key !== bgKey) { bg = roomBackground(cols, rows, id); bgKey = key; }
-    return { tops, kids };
-  }
-
   // ---------- render ----------
 
   const ctx = canvas.getContext("2d");
-  let hits = [];
+  let W = 0, H = 0, dpr = 1, S = 4, X0 = 0, Y0 = 0, anchors = [];
 
-  function stationOrigin(slot) {
-    return [ROOM_PAD + (slot % cols) * STATION_W, WALL_H + 2 + Math.floor(slot / cols) * STATION_H];
-  }
-  function popScale(ent, now) {
-    if (ent.died) { const p = clamp((now - ent.died) / DESPAWN_MS, 0, 1); return 1 - p * p; }
-    const p = clamp((now - ent.born) / SPAWN_MS, 0, 1);
-    if (p >= 1) return 1;
-    const c1 = 1.70158, c3 = c1 + 1;
-    return 1 + c3 * (p - 1) ** 3 + c1 * (p - 1) ** 2; // easeOutBack
-  }
-  function poof(cx, cy, ent, now, unit) {
-    const age = ent.died ? now - ent.died : now - ent.born;
-    if (age < 0 || age > 450 || reduced) return;
-    const p = age / 450;
-    ctx.fillStyle = `rgba(243, 233, 210, ${0.85 * (1 - p)})`;
-    for (let k = 0; k < 8; k++) {
-      const a = (k / 8) * Math.PI * 2 + ent.seed;
-      const r = (6 + p * 14) * unit;
-      const sz = Math.max(1, Math.round((3 - p * 2) * unit));
-      ctx.fillRect(Math.round(cx + Math.cos(a) * r - sz / 2), Math.round(cy + Math.sin(a) * r * 0.7 - sz / 2), sz, sz);
-    }
-  }
-  function drawSprite(persona, status, ent, dx, dy, unit, now, t) {
-    // dx,dy: device px top-left of the 32x32 sprite at scale `unit` (device px per sprite px)
-    const sheet = sheetFor(persona);
-    const img = frameFor(sheet, status, t, ent.seed);
-    const k = popScale(ent, now);
-    const full = sheet.size * unit;
-    if (k <= 0.01) return;
-    const w = Math.round(full * k), h = Math.round(full * k);
-    const base = dy + Math.round(24 / 32 * full);
-    ctx.drawImage(img, Math.round(dx + (full - w) / 2), Math.round(base - (24 / 32) * h), w, h);
-  }
-
-  function frame(t) {
-    if (dead) return;
-    raf = requestAnimationFrame(frame);
-    if (document.hidden) return;
-    const now = performance.now();
-    const { tops, kids } = layout();
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.imageSmoothingEnabled = false;
-    ctx.clearRect(0, 0, W, H);
-    ctx.drawImage(bg, 0, 0, bg.width * S, bg.height * S);
-    hits = [];
-    const bubbles = [];
-    const bySlot = new Map();
-    for (const ent of tops) bySlot.set(slotOf.get(ent.id), ent);
-    const mini = Math.max(1, Math.round(S * 0.6));
-
-    for (let slot = 0; slot < cols * rows; slot++) {
-      const [ox, oy] = stationOrigin(slot);
-      const ent = bySlot.get(slot);
-      ctx.setTransform(S, 0, 0, S, 0, 0);
-      drawChair(ctx, ox, oy);
-      if (!ent) { drawDesk(ctx, ox, oy, { empty: true, seed: slot }); continue; }
-      const s = ent.s;
-      const persona = personas.get(s.persona_id) ?? { id: s.persona_id, kind: "other", name: "…" };
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      const cx = (ox + CHAR_DX) * S, cy = (oy + CHAR_DY) * S;
-      drawSprite(persona, s.status, ent, cx, cy, S, now, t);
-      ctx.setTransform(S, 0, 0, S, 0, 0);
-      const busy = BUSY.has(s.status);
-      drawDesk(ctx, ox, oy, { screenOn: busy, kind: persona.kind, seed: hash32(persona.id) });
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      if (busy && !ent.died) {
-        ctx.globalCompositeOperation = "lighter";
-        ctx.fillStyle = "rgba(120, 170, 255, 0.10)";
-        ctx.fillRect(cx + 9 * S, cy + 8 * S, 14 * S, 15 * S);
-        ctx.globalCompositeOperation = "source-over";
-      }
-      poof(cx + 16 * S, cy + 14 * S, ent, now, S);
-      hits.push({ x0: cx + 6 * S, y0: cy, x1: cx + 26 * S, y1: cy + 30 * S, ent, persona });
-      if (s.status === "waiting" && !ent.died) drawQuestion(cx + 25 * S, cy - 2 * S + (reduced ? 0 : Math.round(Math.sin(t / 220) * 1.5) * S), S);
-      if (s.status === "idle" && !ent.died && Date.now() - s.last_seen > 60_000) bubbles.push({ type: "zzz", x: cx + 24 * S, y: cy + 2 * S, t });
-      if (!ent.died) bubbles.push({ type: "speech", x: cx + 16 * S, y: cy + 1 * S, s, persona, maxW: (STATION_W - 8) * S });
-      bubbles.push({ type: "name", x: cx + 16 * S, y: (oy + CHAR_DY + 44) * S, persona, s });
-
-      // subagents at the side tables
-      const ks = kids.get(s.id) ?? [];
-      ks.slice(0, MINI_SLOTS).forEach((kent, j) => {
-        const mx = ox + 55 + (j % 2) * 20, my = oy + 4 + Math.floor(j / 2) * 30;
-        const kp = personas.get(kent.s.persona_id) ?? persona;
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        const sx = Math.round(mx * S + (20 * S - 32 * mini) / 2), sy = Math.round(my * S + 15 * S - 24 * mini);
-        drawSprite(kp, kent.s.status, kent, sx, sy, mini, now, t);
-        ctx.setTransform(S, 0, 0, S, 0, 0);
-        drawMiniTable(ctx, mx, my);
-        if (BUSY.has(kent.s.status)) drawMiniLaptop(ctx, mx, my + 2);
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        poof(sx + 16 * mini, sy + 14 * mini, kent, now, mini);
-        hits.push({ x0: mx * S, y0: sy, x1: (mx + 20) * S, y1: (my + 24) * S, ent: kent, persona: kp, parent: persona });
-        if (!kent.died && kent.s.status !== "idle") bubbles.push({ type: "tag", x: mx * S + 10 * S, y: sy + 2 * mini, s: kent.s });
-      });
-      if (ks.length > MINI_SLOTS) bubbles.push({ type: "more", x: (ox + 75) * S, y: (oy + 66) * S, n: ks.length - MINI_SLOTS });
-    }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    if (!entities.size) { ctx.fillStyle = "rgba(10, 8, 20, 0.5)"; ctx.fillRect(0, 0, W, H); } // lights off
-    for (const b of bubbles.filter((b) => b.type !== "speech")) drawLabel(b);
-    for (const b of bubbles.filter((b) => b.type === "speech")) drawSpeech(b);
+  function layout() {
+    dpr = window.devicePixelRatio || 1;
+    const avail = Math.max(200, roomWrap.clientWidth);
+    const totalW = HOUSE_W + MARGIN * 2, totalH = HOUSE_H + MARGIN * 2;
+    // even device scale keeps the half-size sprites on whole pixels
+    S = Math.max(2, Math.floor((avail * dpr) / totalW / 2) * 2);
+    S = Math.min(S, Math.round(8 * dpr));
+    fitCanvas(canvas, (totalW * S) / dpr, (totalH * S) / dpr);
+    W = canvas.width; H = canvas.height;
+    X0 = (MARGIN + WALL) * S; Y0 = (MARGIN + WALL) * S;
   }
 
   const FONT = (px, w = 600) => `${w} ${Math.round(px * dpr)}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
 
-  function taskLine(s, cb) {
+  function frame(t) {
+    if (dead) return;
+    raf = requestAnimationFrame(frame);
+    const dt = Math.min(0.1, (t - lastT) / 1000);
+    lastT = t;
+    if (document.hidden) return;
+    sim.update(dt, t);
+    layout();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.imageSmoothingEnabled = false;
+    ctx.fillStyle = "#1f3b33";
+    ctx.fillRect(0, 0, W, H);
+    anchors = sim.draw(ctx, X0, Y0, S, t, { reduced, now: t });
+    const st = sim.stats();
+    if (st.awake === 0) { ctx.fillStyle = "rgba(8, 10, 30, 0.42)"; ctx.fillRect(0, 0, W, H); }
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    for (const a of anchors) {
+      if (a.ent.sleeper || a.ent.pose === "sleep") drawZzz(a, t);
+      else drawSpeech(a, t);
+    }
+  }
+
+  function drawZzz(a, t) {
+    const ph = reduced ? 0.3 : ((t / 1600 + (a.ent.seed % 100) / 100) % 1);
+    ctx.fillStyle = `rgba(230, 220, 255, ${0.95 * (1 - ph)})`;
+    ctx.font = FONT(12, 700);
+    ctx.fillText("z", a.x + 8 * dpr + ph * 8 * dpr, a.y - ph * 18 * dpr);
+    ctx.font = FONT(9, 700);
+    ctx.fillText("z", a.x + 18 * dpr + ph * 5 * dpr, a.y - 12 * dpr - ph * 12 * dpr);
+  }
+
+  function taskLine(s) {
     if (!s.task_no) return null;
     if (isMine() && s.task_enc) {
-      const tt = titleFor(id, s.task_enc, cb);
+      const tt = titleFor(id, s.task_enc);
       if (typeof tt === "string" && tt) return { text: tt, mine: true };
       if (tt === undefined) return { text: `task #${s.task_no} · decrypting…` };
     }
     return { text: `task #${s.task_no}` };
-  }
-
-  function roundRect(x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-    ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-    ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-    ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
-    ctx.closePath();
   }
 
   function fitText(text, maxW) {
@@ -422,124 +296,77 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     return chars.join("") + "…";
   }
 
-  function drawSpeech(b) {
-    const s = b.s;
-    const line1 = statusText(s);
-    const task = taskLine(s);
-    const pad = 5 * dpr, lh = 13 * dpr;
-    ctx.font = FONT(11);
-    const maxW = Math.min(b.maxW, 200 * dpr);
+  function drawSpeech(a, t) {
+    const e = a.ent;
+    const s = e.a;
+    if (s.status === "idle" && !e.ending) return; // resting quietly on the sofa
+    const mini = e.mini;
+    const line1 = mini ? (s.status === "tool" ? s.tool || "tool" : s.status === "thinking" ? "…" : statusLine(e)) : statusLine(e);
+    const task = !mini && !e.ending ? taskLine(s) : null;
+    const pad = 4 * dpr, lh = 12 * dpr;
+    const maxW = 150 * dpr;
+    ctx.font = FONT(mini ? 9 : 10);
     const t1 = fitText(line1, maxW - pad * 2);
-    ctx.font = FONT(10, 400);
-    const t2 = task ? fitText(task.text, maxW - pad * 2) : null;
-    ctx.font = FONT(11);
     let w = ctx.measureText(t1).width;
-    ctx.font = FONT(10, 400);
-    if (t2) w = Math.max(w, ctx.measureText(t2).width);
+    let t2 = null;
+    if (task) { ctx.font = FONT(9, 400); t2 = fitText(task.text, maxW - pad * 2); w = Math.max(w, ctx.measureText(t2).width); }
     w = Math.ceil(w + pad * 2);
-    const h = Math.ceil(lh * (t2 ? 2 : 1) + pad * 1.4);
-    const x = Math.round(clamp(b.x - w / 2, 2, W - w - 2));
-    const y = Math.round(b.y - h - 7 * dpr);
+    const h = Math.ceil(lh * (t2 ? 2 : 1) + pad);
+    const bounce = s.status === "waiting" && !reduced ? Math.round(Math.sin(t / 200) * 2 * dpr) : 0;
+    const x = Math.round(clamp(a.x - w / 2, 2, W - w - 2));
+    const y = Math.round(Math.max(2, a.y - h - 5 * dpr) + bounce);
     ctx.fillStyle = "rgba(20, 15, 28, 0.35)";
-    roundRect(x + dpr, y + 2 * dpr, w, h, 4 * dpr); ctx.fill();
-    ctx.fillStyle = s.status === "waiting" ? "#ffe9a8" : "#fff8ec";
-    roundRect(x, y, w, h, 4 * dpr); ctx.fill();
-    // tail
+    ctx.fillRect(x + dpr, y + 2 * dpr, w, h);
+    ctx.fillStyle = s.status === "waiting" ? "#ffe9a8" : s.status === "thinking" ? "#e2fbf6" : "#fff8ec";
+    ctx.fillRect(x, y, w, h);
     ctx.beginPath();
-    ctx.moveTo(b.x - 4 * dpr, y + h - 0.5); ctx.lineTo(b.x + 4 * dpr, y + h - 0.5); ctx.lineTo(b.x, y + h + 5 * dpr);
-    ctx.closePath(); ctx.fill();
+    ctx.moveTo(a.x - 3 * dpr, y + h); ctx.lineTo(a.x + 3 * dpr, y + h); ctx.lineTo(a.x, y + h + 4 * dpr); ctx.closePath(); ctx.fill();
     ctx.textAlign = "left"; ctx.textBaseline = "top";
-    ctx.font = FONT(11);
+    ctx.font = FONT(mini ? 9 : 10);
     ctx.fillStyle = s.status === "tool" ? "#7a3e12" : s.status === "thinking" ? "#1f5f58" : s.status === "waiting" ? "#8a2b48" : "#5a5070";
-    ctx.fillText(t1, x + pad, y + pad * 0.8);
+    ctx.fillText(t1, x + pad, y + pad * 0.6);
     if (t2) {
-      ctx.font = FONT(10, 400);
+      ctx.font = FONT(9, 400);
       ctx.fillStyle = task.mine ? "#241a2b" : "#7a7090";
-      ctx.fillText(t2, x + pad, y + pad * 0.8 + lh);
+      ctx.fillText(t2, x + pad, y + pad * 0.6 + lh);
     }
-  }
-
-  function drawLabel(b) {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    if (b.type === "name") {
-      ctx.font = FONT(10);
-      const text = truncate(b.persona.name ?? "", 14);
-      const w = ctx.measureText(text).width + 10 * dpr, h = 14 * dpr;
-      ctx.fillStyle = "rgba(20, 15, 28, 0.7)";
-      ctx.fillRect(Math.round(b.x - w / 2), Math.round(b.y - h / 2), Math.round(w), Math.round(h));
-      ctx.fillStyle = STATUS_COLOR[b.s.status] ?? "#f3e9d2";
-      ctx.fillText(text, b.x, b.y + dpr * 0.5);
-    } else if (b.type === "tag") {
-      ctx.font = FONT(9);
-      const text = b.s.status === "tool" ? truncate(b.s.tool || "tool", 10) : b.s.status === "thinking" ? "…" : b.s.status === "waiting" ? "?" : "";
-      if (!text) return;
-      const w = ctx.measureText(text).width + 8 * dpr, h = 12 * dpr;
-      ctx.fillStyle = "rgba(255, 248, 236, 0.92)";
-      ctx.fillRect(Math.round(b.x - w / 2), Math.round(b.y - h - 2 * dpr), Math.round(w), Math.round(h));
-      ctx.fillStyle = "#5a3a1a";
-      ctx.fillText(text, b.x, b.y - h / 2 - 2 * dpr + dpr * 0.5);
-    } else if (b.type === "zzz") {
-      ctx.font = FONT(10, 700);
-      ctx.fillStyle = "rgba(200, 190, 230, 0.85)";
-      const ph = reduced ? 0 : (b.t / 900) % 1;
-      ctx.fillText("z", b.x + ph * 6 * dpr, b.y - ph * 10 * dpr);
-      ctx.fillText("z", b.x + 6 * dpr + ph * 4 * dpr, b.y - 9 * dpr - ph * 8 * dpr);
-    } else if (b.type === "more") {
-      ctx.font = FONT(10);
-      ctx.fillStyle = "#f3e9d2";
-      ctx.fillText(`+${b.n}`, b.x, b.y);
-    }
-  }
-
-  // "?" pixel bubble for waiting
-  const Q = ["01110", "10001", "00001", "00110", "00100", "00000", "00100"];
-  function drawQuestion(x, y, u) {
-    ctx.fillStyle = PAL.outline; ctx.fillRect(x - u, y - u, 9 * u, 11 * u);
-    ctx.fillStyle = "#ffcf6e"; ctx.fillRect(x, y, 7 * u, 9 * u);
-    ctx.fillStyle = "#241a2b";
-    Q.forEach((row, ry) => [...row].forEach((c, rx) => { if (c === "1") ctx.fillRect(x + (rx + 1) * u, y + (ry + 1) * u, u, u); }));
   }
 
   // ---------- hover tooltip ----------
 
-  function hitAt(px, py) {
-    const x = px * dpr, y = py * dpr;
-    for (let i = hits.length - 1; i >= 0; i--) {
-      const h = hits[i];
-      if (x >= h.x0 && x <= h.x1 && y >= h.y0 && y <= h.y1) return h;
-    }
-    return null;
-  }
-  function showTip(h, px, py) {
-    const s = h.ent.s;
-    const task = taskLine(s);
+  function showTip(e, px, py) {
+    const s = e.a;
+    const p = personas.get(s.persona_id);
+    const parent = s.parent_id ? sessions.get(s.parent_id) : null;
+    const where = SPOT_LABEL[e.target?.kind] ?? "";
+    const task = e.sleeper ? null : taskLine(s);
     tip.replaceChildren(
-      el("strong", { text: h.persona.name ?? "Agent" }),
-      el("span", { class: "muted", text: h.parent ? `${kindLabel(h.persona.kind)} · subagent of ${h.parent.name}` : kindLabel(h.persona.kind) }),
-      el("span", { text: statusText(s), style: `color:${STATUS_COLOR[s.status] ?? "inherit"}` }),
+      el("strong", { text: p?.name ?? "Agent" }),
+      el("span", { class: "muted", text: parent ? `${kindLabel(p?.kind)} · subagent of ${personas.get(parent.persona_id)?.name ?? "…"}` : kindLabel(p?.kind) }),
+      el("span", { text: e.sleeper ? "asleep — no open session" : `${statusText(s)}${where ? ` · at the ${where}` : ""}`, style: `color:${STATUS_COLOR[s.status] ?? "#c9c2e8"}` }),
       task ? el("span", { class: task.mine ? "" : "muted", text: task.text }) : null,
-      el("span", { class: "muted small", text: `at the desk for ${timeAgo(s.started_at)} · seen ${timeAgo(s.last_seen)} ago` }),
+      s.started_at ? el("span", { class: "muted small", text: `in for ${timeAgo(s.started_at)} · seen ${timeAgo(s.last_seen)} ago` }) : null,
     );
     tip.hidden = false;
     const r = roomWrap.getBoundingClientRect();
     tip.style.left = clamp(px + 12, 4, r.width - tip.offsetWidth - 4) + "px";
     tip.style.top = clamp(py + 12, 4, Math.max(4, r.height - tip.offsetHeight - 4)) + "px";
   }
-  const offsetIn = (ev) => {
+  function hitAt(ev) {
     const r = canvas.getBoundingClientRect(), w = roomWrap.getBoundingClientRect();
-    return { cx: ev.clientX - r.left, cy: ev.clientY - r.top, wx: ev.clientX - w.left, wy: ev.clientY - w.top };
-  };
+    const ax = ((ev.clientX - r.left) * dpr - X0) / S, ay = ((ev.clientY - r.top) * dpr - Y0) / S;
+    return { e: sim.hitTest(ax, ay), wx: ev.clientX - w.left, wy: ev.clientY - w.top };
+  }
   canvas.addEventListener("pointermove", (ev) => {
-    const o = offsetIn(ev);
-    const h = hitAt(o.cx, o.cy);
-    canvas.style.cursor = h ? "help" : "default";
-    if (h) showTip(h, o.wx, o.wy); else tip.hidden = true;
+    const h = hitAt(ev);
+    canvas.style.cursor = h.e ? "help" : "default";
+    if (h.e) showTip(h.e, h.wx, h.wy); else tip.hidden = true;
   });
   canvas.addEventListener("pointerdown", (ev) => {
     if (ev.pointerType !== "touch") return;
-    const o = offsetIn(ev);
-    const h = hitAt(o.cx, o.cy);
-    if (h) showTip(h, o.wx, o.wy); else tip.hidden = true;
+    const h = hitAt(ev);
+    if (h.e) showTip(h.e, h.wx, h.wy); else tip.hidden = true;
   });
   canvas.addEventListener("pointerleave", () => (tip.hidden = true));
 

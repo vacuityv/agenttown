@@ -50,6 +50,7 @@ function genome(seed, kind) {
     skin: pick(SKINS), hair: pick(HAIRS), shirt: pick(SHIRTS), accent: pick(ACCENTS), accent2: pick(ACCENTS),
     hairStyle: pick(HAIR_STYLES), accessory: pick(ACCESSORIES), outfit: pick(OUTFITS), blush: r() < 0.7,
     mouth: r() < 0.5 ? "smile" : "dot",
+    pants: pick(["#3b4a6b", "#4a3f5c", "#5a4a3a", "#2f3a4a", "#6b5a7a", "#3f5a4f"]),
   };
   // A light nod to the agent kind, without making everyone look alike.
   if (kind === "claude-code" && r() < 0.5) g.shirt = pick(["#d97757", "#c96442", "#e8a07a"]);
@@ -68,9 +69,13 @@ function drawCharacter(G, pose) {
   if (style === "ponytail") { rect(g, 23, 7, 25, 15, HR); rect(g, 24, 15, 25, 18, HRS); }
 
   // Body / shirt
-  rect(g, 10, 19, 21, 31, SH);
+  rect(g, 10, 19, 21, 26, SH);
   px(g, 10, 19, T); px(g, 21, 19, T);
-  rect(g, 20, 21, 20, 31, SHS);
+  rect(g, 20, 21, 20, 26, SHS);
+  // Legs (hidden behind desks, shown when walking): pants + shoes
+  rect(g, 11, 27, 20, 27, EYE);
+  rect(g, 11, 28, 14, 29, EYE); rect(g, 17, 28, 20, 29, EYE);
+  rect(g, 10, 30, 14, 31, OUT); rect(g, 17, 30, 21, 31, OUT);
   // Neck
   rect(g, 14, 18, 17, 18, SKS);
   // Outfit details
@@ -119,9 +124,9 @@ function drawCharacter(G, pose) {
   // Face
   const ey = pose.eyes === "up" || pose.eyes === "upRight" ? 10 : 11;
   const ex = pose.eyes === "upRight" ? 1 : 0;
-  if (pose.eyes === "blink") { rect(g, 12, 12, 13, 12, EYE); rect(g, 18, 12, 19, 12, EYE); }
+  if (pose.eyes === "blink") { rect(g, 12, 12, 13, 12, OUT); rect(g, 18, 12, 19, 12, OUT); }
   else {
-    rect(g, 12 + ex, ey, 13 + ex, ey + 1, EYE); rect(g, 18 + ex, ey, 19 + ex, ey + 1, EYE);
+    rect(g, 12 + ex, ey, 13 + ex, ey + 1, OUT); rect(g, 18 + ex, ey, 19 + ex, ey + 1, OUT);
     px(g, 13 + ex, ey, WH); px(g, 19 + ex, ey, WH);
   }
   if (G.blush) { px(g, 10, 14, BL); px(g, 11, 14, BL); px(g, 20, 14, BL); px(g, 21, 14, BL); }
@@ -158,7 +163,7 @@ export function defaultSprite(personaId, kind = "") {
   const detail = G.accessory === "sprout" ? "#7fd36b" : G.outfit === "tie" ? G.accent : G.outfit === "sweater" ? shade(G.shirt, 0.35) : WHITE;
   const palette = [
     "transparent", "#241a2b", G.skin, shade(G.skin, -0.16), G.hair, shade(G.hair, -0.28), G.shirt, shade(G.shirt, -0.22),
-    "#241a2b", "#fff8ec", G.accent, "#ff9b9b", shade(G.accent, -0.3), "#8a3b46", detail, shade(G.hair, 0.3),
+    G.pants, "#fff8ec", G.accent, "#ff9b9b", shade(G.accent, -0.3), "#8a3b46", detail, shade(G.hair, 0.3),
   ];
   const toRows = (g) => g.map((r) => r.map((c) => c.toString(16)).join(""));
   const f = (hands, eyes) => toRows(drawCharacter(G, { hands, eyes }));
@@ -275,4 +280,51 @@ export function spriteIcon(persona, scale = 2) {
   ctx.imageSmoothingEnabled = false;
   ctx.drawImage(sheet.idle[0], 0, 0, c.width, c.height);
   return c;
+}
+
+
+// ---- derived poses (work for any sprite): walk cycle, sitting, sleeping ----
+
+const poseCache = new Map();
+
+function blank(size) { return offscreen(size, size); }
+
+function flipped(src) {
+  const [c, x] = offscreen(src.width, src.height);
+  x.translate(src.width, 0);
+  x.scale(-1, 1);
+  x.drawImage(src, 0, 0);
+  return c;
+}
+
+// Returns { walk:[4], walkL:[4] (mirrored), sit, sleep } canvases for a persona.
+export function posesFor(persona) {
+  const sheet = sheetFor(persona);
+  let p = poseCache.get(sheet);
+  if (p) return p;
+  const n = sheet.size;
+  const base = sheet.idle[0];
+  const legTop = Math.round(n * 0.8);       // rows below this are legs/feet
+  const half = n / 2;
+  const walk = [0, 1, 2, 3].map((f) => {
+    const [c, x] = blank(n);
+    const bob = f === 1 || f === 3 ? -1 : 0;
+    const liftL = f === 1 ? 2 : 0, liftR = f === 3 ? 2 : 0;
+    const strideL = f === 1 ? -1 : f === 3 ? 1 : 0, strideR = -strideL;
+    // legs first so the body covers the top of a lifted leg
+    x.drawImage(base, 0, legTop, half, n - legTop, strideL, legTop - liftL + bob + 1, half, n - legTop);
+    x.drawImage(base, half, legTop, half, n - legTop, half + strideR, legTop - liftR + bob + 1, half, n - legTop);
+    x.drawImage(base, 0, 0, n, legTop, 0, bob + 1, n, legTop);
+    return c;
+  });
+  // sitting: upper body lowered, legs tucked (only the top of the legs shows)
+  const [sit, sx] = blank(n);
+  sx.drawImage(base, 0, 0, n, legTop + 2, 0, 3, n, legTop + 2);
+  // sleeping: eyes closed if the sprite has a blink frame; only head & shoulders (blanket covers the rest)
+  const [sleep, zx] = blank(n);
+  const closed = sheet.idle[1] ?? base;
+  zx.drawImage(closed, 0, 0, n, Math.round(n * 0.66), 0, 0, n, Math.round(n * 0.66));
+  p = { size: n, walk, walkL: walk.map(flipped), sit, sleep };
+  poseCache.set(sheet, p);
+  return p;
 }

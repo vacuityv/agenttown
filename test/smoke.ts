@@ -46,6 +46,7 @@ try {
   await new Promise((r) => setTimeout(r, 200));
 
   cli("a", "persona", "--name", "Claude", "--kind", "claude-code", "--appearance", "戴耳机的橘猫");
+  assert.equal(JSON.parse(readFileSync(join(dir, "a", "config.json"), "utf8")).personas["claude-code"], "Claude", "persona name remembered for hooks");
   const r1 = JSON.parse(cli("a", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1", "--status", "thinking", "--task", "修复登录页的 bug"));
   assert.equal(r1.task_no, 1);
   cli("b", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1", "--status", "tool", "--tool", "Bash");

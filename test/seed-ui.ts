@@ -14,8 +14,8 @@ const PLAN: { name: string; agents: { name: string; kind: string; appearance?: s
     { name: "Ada", kind: "claude-code" }, { name: "Linus", kind: "codex" }, { name: "Grace", kind: "claude-code" },
   ] },
   { name: "小橘的家", activity: 0.6, agents: [{ name: "橘子", kind: "claude-code" }, { name: "Mochi", kind: "codex" }] },
-  { name: "Night Owl Lab", activity: 0.35, agents: [{ name: "Hoot", kind: "claude-code" }, { name: "Ember", kind: "other" }, { name: "Pixel", kind: "codex" }] },
-  { name: "Sleepy Cottage", activity: 0, agents: [] },
+  { name: "Night Owl Lab", activity: 0.5, agents: [{ name: "Hoot", kind: "claude-code" }, { name: "Ember", kind: "other" }, { name: "Pixel", kind: "codex" }] },
+  { name: "Sleepy Cottage", activity: 0, agents: [{ name: "Dozy", kind: "claude-code" }, { name: "Snooze", kind: "codex" }] },
   { name: "<b>Tiny</b> & \"Quoted\"", activity: 0.2, agents: [{ name: "<img src=x>", kind: "claude-code" }] },
 ];
 
@@ -91,8 +91,18 @@ async function loadHomes(): Promise<Home[]> {
 
 const pick = <T>(a: T[]) => a[Math.floor(Math.random() * a.length)];
 const chance = (p: number) => Math.random() < p;
+const rand = (a: number, b: number) => a + Math.random() * (b - a);
+const sec = (a: number, b: number) => Date.now() + rand(a, b) * 1000;
 
-type Agent = { persona: { name: string; kind: string }; session: string; open: boolean; subs: { key: string; ttl: number }[]; gen: number };
+// Weighted tool mix: every activity spot in the home gets visitors.
+const TOOL_MIX = ["Bash", "Bash", "Read", "Read", "Grep", "Glob", "Edit", "Edit", "Write", "MultiEdit",
+  "WebSearch", "WebFetch", "mcp__github__search", "mcp__linear__issues", "Task", "TodoWrite", "apply_patch"];
+
+type Sub = { key: string; until: number; next: number };
+type Agent = {
+  persona: { name: string; kind: string }; base: string; gen: number;
+  open: boolean; next: number; napper: boolean; subs: Sub[];
+};
 
 async function main() {
   const homes = await loadHomes();
@@ -103,7 +113,10 @@ async function main() {
   const sims = homes.map((h, i) => {
     const plan = PLAN[i];
     const token = authToken(h.owner_key);
-    const agents: Agent[] = plan.agents.map((a, j) => ({ persona: a, session: `seed-${i}-${j}`, open: false, subs: [], gen: 0 }));
+    const agents: Agent[] = plan.agents.map((a, j) => ({
+      persona: a, base: `seed-${i}-${j}`, gen: Math.floor(Date.now() / 1000), open: false,
+      next: sec(0, 8), napper: j % 3 === 1, subs: [],
+    }));
     return { h, plan, token, agents };
   });
 
@@ -117,44 +130,67 @@ async function main() {
     api("/report", { token: s.token, body }).catch((e) => console.warn(s.h.name, String(e)));
 
   for (;;) {
+    const now = Date.now();
     for (const s of sims) {
+      if (s.plan.activity <= 0) continue; // residents who never wake up
       for (const a of s.agents) {
-        if (!chance(0.5)) continue;
-        if (!a.open) {
-          if (chance(s.plan.activity * 0.6)) {
-            a.open = true;
-            a.gen++;
-            await report(s, { persona: a.persona, session: `${a.session}-${a.gen}`, status: "thinking",
-              task: { title_enc: encryptTitle(s.h.owner_key, pick(TITLES)) } });
+        const sess = `${a.base}-${a.gen}`;
+        // subagents: busy for a while, then they finish
+        for (const sub of a.subs) {
+          if (now >= sub.until) { await report(s, { persona: a.persona, session: sub.key, parent: sess, status: "ended" }); sub.until = 0; continue; }
+          if (now >= sub.next) {
+            sub.next = sec(3, 7);
+            await report(s, { persona: a.persona, session: sub.key, parent: sess, ...(chance(0.3) ? { status: "thinking" } : { status: "tool", tool: pick(TOOL_MIX.filter((t) => t !== "Task")) }) });
           }
+        }
+        a.subs = a.subs.filter((x) => x.until > 0);
+        if (now < a.next) continue;
+
+        if (!a.open) {
+          if (chance(s.plan.activity)) {
+            a.open = true; a.gen++;
+            await report(s, { persona: a.persona, session: `${a.base}-${a.gen}`, status: "thinking",
+              task: { title_enc: encryptTitle(s.h.owner_key, pick(TITLES)) } });
+            a.next = sec(3, 7);
+          } else a.next = sec(20, 60);
           continue;
         }
-        const sess = `${a.session}-${a.gen}`;
-        // Subagents: tick down, end when done; occasionally spawn.
-        for (const sub of a.subs) {
-          sub.ttl--;
-          await report(s, { persona: a.persona, session: sub.key, parent: sess,
-            status: sub.ttl <= 0 ? "ended" : chance(0.3) ? "thinking" : "tool", tool: pick(TOOLS) });
-        }
-        a.subs = a.subs.filter((x) => x.ttl > 0);
-        if (a.subs.length < 3 && chance(0.12 * s.plan.activity)) {
-          const key = `${sess}-sub-${Math.random().toString(36).slice(2, 8)}`;
-          a.subs.push({ key, ttl: 3 + Math.floor(Math.random() * 8) });
-          await report(s, { persona: a.persona, session: key, parent: sess, status: "thinking",
-            task: { title_enc: encryptTitle(s.h.owner_key, "Sub: " + pick(TITLES)) } });
-        }
         const r = Math.random();
-        let body: any;
-        if (r < 0.03 * (1.2 - s.plan.activity)) { body = { status: "ended" }; a.open = false; a.subs = []; }
-        else if (r < 0.1) body = { status: "waiting" };
-        else if (r < 0.25 * (1.3 - s.plan.activity)) body = { status: "idle" };
-        else if (r < 0.45) body = { status: "thinking" };
-        else body = { status: "tool", tool: pick(TOOLS) };
-        if (chance(0.05)) body.task = { title_enc: encryptTitle(s.h.owner_key, pick(TITLES)) };
-        await report(s, { persona: a.persona, session: sess, ...body });
+        if (r < 0.025) {                       // done for now
+          for (const sub of a.subs) await report(s, { persona: a.persona, session: sub.key, parent: sess, status: "ended" });
+          a.subs = [];
+          await report(s, { persona: a.persona, session: sess, status: "ended" });
+          a.open = false; a.next = sec(30, 120);
+        } else if (r < 0.06 && a.napper) {      // long nap: idle, then silent > 3 min (shows up in bed)
+          await report(s, { persona: a.persona, session: sess, status: "idle" });
+          a.next = sec(200, 280);
+        } else if (r < 0.12) {                 // needs the human
+          await report(s, { persona: a.persona, session: sess, status: "waiting" });
+          a.next = sec(12, 30);
+        } else if (r < 0.2) {                  // short rest on the sofa
+          await report(s, { persona: a.persona, session: sess, status: "idle" });
+          a.next = sec(15, 45);
+        } else if (r < 0.42) {
+          const body: any = { status: "thinking" };
+          if (chance(0.15)) body.task = { title_enc: encryptTitle(s.h.owner_key, pick(TITLES)) };
+          await report(s, { persona: a.persona, session: sess, ...body });
+          a.next = sec(3, 9);
+        } else {
+          const tool = pick(TOOL_MIX);
+          await report(s, { persona: a.persona, session: sess, status: "tool", tool });
+          if (tool === "Task" && a.subs.length < 3) {
+            for (let k = 0, n = 1 + Math.floor(Math.random() * 2); k < n; k++) {
+              const key = `${sess}-sub-${Math.random().toString(36).slice(2, 8)}`;
+              a.subs.push({ key, until: sec(15, 40), next: sec(2, 4) });
+              await report(s, { persona: a.persona, session: key, parent: sess, status: "thinking",
+                task: { title_enc: encryptTitle(s.h.owner_key, "Sub: " + pick(TITLES)) } });
+            }
+          }
+          a.next = sec(4, 12);
+        }
       }
     }
-    await new Promise((r) => setTimeout(r, 1500));
+    await new Promise((r) => setTimeout(r, 500));
   }
 }
 

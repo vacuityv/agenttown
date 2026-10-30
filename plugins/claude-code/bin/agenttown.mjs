@@ -159,6 +159,10 @@ async function cmdPersona(args) {
   const body = { name: args.name, kind: args.kind || "other" };
   if (args.appearance !== undefined) body.appearance = args.appearance;
   const r = await call(serverOf(cfg, args), "POST", "/personas", { token: authToken(cfg.owner_key), body });
+  // Hooks report under personas[kind]; remember the chosen name so they don't create a second character.
+  if (r.persona.kind !== "other" && cfg.personas?.[r.persona.kind] !== r.persona.name) {
+    saveConfig({ ...cfg, personas: { ...cfg.personas, [r.persona.kind]: r.persona.name } });
+  }
   if (args.json) return out(JSON.stringify(r.persona));
   out(`Persona "${r.persona.name}" (${r.persona.kind}) — sprite: ${r.persona.sprite_status}`);
 }
