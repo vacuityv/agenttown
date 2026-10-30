@@ -157,6 +157,20 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
       ) ${T}`,
     ],
   },
+  // Dwelling art (server/dwelling-gen.ts). Numbered 100+ so it can't collide with versions added on other branches.
+  {
+    version: 100,
+    statements: [
+      `ALTER TABLE homes
+        ADD COLUMN look       VARCHAR(300) NULL,                    -- one-sentence description of the home, public
+        ADD COLUMN art        MEDIUMTEXT   NULL,                    -- generated dwelling art JSON
+        ADD COLUMN art_status VARCHAR(16)  NOT NULL DEFAULT 'none', -- none | pending | ready | failed
+        ADD COLUMN art_error  VARCHAR(64)  NULL,                    -- why art_status = 'failed'
+        ADD KEY homes_art_status (art_status, created_at)`,
+      // avatar_usage.count = sprite generations, .dwellings = dwelling generations (separate daily caps)
+      "ALTER TABLE avatar_usage ADD COLUMN dwellings INT NOT NULL DEFAULT 0",
+    ],
+  },
 ];
 
 export async function initDb() {

@@ -45,7 +45,10 @@ npm test && npm run test:hooks             # TEST_MYSQL_URL; run them one after 
 Set `ANTHROPIC_API_KEY` to enable sprite generation (`AVATAR_MODEL`, default `claude-sonnet-5-5`; format v2 in
 `docs/protocol.md`). To eyeball generations without a server or DB:
 `node test/avatar-preview.ts "a jellyfish that glows when it thinks" "一盆会跳的仙人掌"` → `data/avatar-preview.html`.
-`npm run test:svg` runs the SVG sanitizer tests alone (no DB; also part of `npm test`).
+Homes get a look too (`agenttown home --look "a treehouse with lanterns, watercolor"`): Claude draws the whole dwelling
+(`DWELLING_EFFORT`, default `high`, ~1.5–4 min); preview with `node test/dwelling-preview.ts "<look>" …` →
+`data/dwelling-preview.html`.
+`npm run test:svg` runs the SVG sanitizer / sprite / dwelling validation tests alone (no DB; also part of `npm test`).
 
 ## Claude Code plugin (alternative to `agenttown install claude-code`)
 

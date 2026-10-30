@@ -85,6 +85,17 @@ api.patch("/home", requireAuth, async (c) => {
   return c.json({ home: await store.renameHome(c.get("home").id, name) });
 });
 
+// Dwelling look: one sentence (≤ 300 chars) → Claude draws the home (dwelling art v1). null clears it.
+api.put("/home/look", requireAuth, async (c) => {
+  const home = c.get("home");
+  const b = await body(c);
+  if (b.look !== null && typeof b.look !== "string") throw new ApiError(400, "bad_look", "look must be a string (≤ 300 chars) or null.");
+  const look = b.look === null ? null : cleanText(b.look, 300);
+  if (b.look !== null && !look) throw new ApiError(400, "bad_look", "look must not be empty (use null to clear it).");
+  limit(`look:${home.id}`, 1 / 300, 3); // generation itself is capped per home/day by the worker
+  return c.json({ home: await store.setLook(home.id, look) });
+});
+
 function personaFields(p: any) {
   const name = cleanText(p?.name, 32);
   const kind = cleanText(p?.kind, 24)?.toLowerCase().replace(/[^a-z0-9-]/g, "-") || "other";

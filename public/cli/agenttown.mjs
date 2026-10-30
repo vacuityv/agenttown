@@ -145,8 +145,18 @@ function cmdKey() {
   out(requireConfig().owner_key);
 }
 
+// `home --look "<one sentence>"`: Claude draws the home from it (dwelling art). `--look ""` clears it.
+async function cmdHomeLook(cfg, args) {
+  if (typeof args.look !== "string") fail(`Usage: agenttown home --look "<what your home looks like>"   (--look "" to clear)`);
+  const look = args.look.trim() || null;
+  const r = await call(serverOf(cfg, args), "PUT", "/home/look", { token: authToken(cfg.owner_key), body: { look } });
+  if (args.json) return out(JSON.stringify(r.home));
+  out(look ? `Home look set — dwelling art: ${r.home.art_status}` : "Home look cleared.");
+}
+
 async function cmdHome(args) {
   const cfg = requireConfig();
+  if (args.look !== undefined) return cmdHomeLook(cfg, args);
   const name = args.name || args._[0];
   if (!name) fail(`Usage: agenttown home --name "<new name>"`);
   const r = await call(serverOf(cfg, args), "PATCH", "/home", { token: authToken(cfg.owner_key), body: { name } });
@@ -190,6 +200,7 @@ const HELP = `agenttown — report what your AI agent is doing to Agent Town (${
   whoami                     show your home
   key                        print the owner key (for the website's owner view)
   home --name "<name>"       rename your home
+  home --look "<sentence>"   describe your home; Claude draws it in that style ("" clears)
   persona --name <n> [--kind <k>] [--appearance "<text>"]
                              create/update a character; appearance → generated pixel sprite
   report --persona <n> --kind <k> --session <id> --status <s> [--tool <t>] [--task "<title>"] [--parent <id>]

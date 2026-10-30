@@ -370,7 +370,7 @@ function attrValue(kind: Kind, raw: string, gradient: boolean): Val | null {
 
 type Clean = { name: string; attrs: [string, Val][]; children: Clean[] };
 
-type Ctx = { elements: number; gradIds: Set<string> };
+type Ctx = { elements: number; maxElements: number; gradIds: Set<string> };
 
 function clean(node: Node, parent: string, depth: number, ctx: Ctx): Clean | null {
   const allowed = Object.hasOwn(ELEMENTS, node.name) ? ELEMENTS[node.name] : null;
@@ -380,7 +380,7 @@ function clean(node: Node, parent: string, depth: number, ctx: Ctx): Clean | nul
   if (node.name === "stop" && !GRADIENTS.has(parent)) return null;
   if (GRADIENTS.has(parent) && node.name !== "stop") return null;
   ctx.elements++;
-  if (ctx.elements > LIMITS.elements) throw new SvgError(`more than ${LIMITS.elements} elements`);
+  if (ctx.elements > ctx.maxElements) throw new SvgError(`more than ${ctx.maxElements} elements`);
 
   const gradient = GRADIENTS.has(node.name);
   const attrs: [string, Val][] = [];
@@ -445,13 +445,18 @@ export type CleanPart = { id: string; svg: string; pivot: [number, number] };
  * `idPrefix` namespaces gradient ids (e.g. "p-ab12cd-") so ids never collide across characters on one page;
  * it must match /^[a-z0-9-]{0,32}$/. Throws SvgError when a limit is exceeded or the markup is malformed.
  */
-export function sanitizeParts(
-  parts: { id: string; svg: string; pivot: [number, number] }[],
+export type Caps = { parts: number; elements: number; bytes: number };
+/** Caps for a dwelling (docs/protocol.md "Dwelling art v1"): same allowlist, bigger budget. */
+export const DWELLING_CAPS: Caps = { parts: 10, elements: 1200, bytes: 60 * 1024 };
+
+export function sanitizeParts<P extends { id: string; svg: string }>(
+  parts: P[],
   idPrefix = "",
-): { parts: CleanPart[]; elements: number; bytes: number } {
+  caps: Caps = LIMITS,
+): { parts: (P & { svg: string })[]; elements: number; bytes: number } {
   if (!/^[a-z0-9-]{0,32}$/.test(idPrefix)) throw new SvgError("bad id prefix");
-  if (parts.length > LIMITS.parts) throw new SvgError(`more than ${LIMITS.parts} parts`);
-  const ctx: Ctx = { elements: 0, gradIds: new Set() };
+  if (parts.length > caps.parts) throw new SvgError(`more than ${caps.parts} parts`);
+  const ctx: Ctx = { elements: 0, maxElements: caps.elements, gradIds: new Set() };
   const trees = parts.map((p) => {
     let nodes = buildTree(tokenize(String(p.svg ?? "")));
     // Tolerate a stray <svg> wrapper: keep its children, ignore its attributes.
@@ -459,18 +464,18 @@ export function sanitizeParts(
     return nodes.map((nd) => clean(nd, "#root", 1, ctx)).filter((x): x is Clean => !!x);
   });
   let bytes = 0;
-  const out: CleanPart[] = [];
+  const out: (P & { svg: string })[] = [];
   trees.forEach((nodes, k) => {
     const svg = nodes.map((nd) => serialize(nd, idPrefix, ctx.gradIds)).join("");
     if (!svg) return; // a part with nothing drawable left is dropped
     bytes += Buffer.byteLength(svg);
-    out.push({ id: parts[k].id, svg, pivot: parts[k].pivot });
+    out.push({ ...parts[k], svg });
   });
-  if (bytes > LIMITS.bytes) throw new SvgError(`serialized svg is ${bytes} bytes (max ${LIMITS.bytes})`);
+  if (bytes > caps.bytes) throw new SvgError(`serialized svg is ${bytes} bytes (max ${caps.bytes})`);
   return { parts: out, elements: ctx.elements, bytes };
 }
 
 /** Convenience for tests: sanitize one fragment. */
 export function sanitizeFragment(svg: string, idPrefix = ""): string {
-  return sanitizeParts([{ id: "x", svg, pivot: [0, 0] }], idPrefix).parts[0]?.svg ?? "";
+  return sanitizeParts([{ id: "x", svg }], idPrefix).parts[0]?.svg ?? "";
 }

@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { sanitizeFragment, sanitizeParts, SvgError, LIMITS } from "../server/svg-sanitize.ts";
 import { buildSprite, SpriteError, PRESETS, idPrefixFor } from "../server/avatar-gen.ts";
+import { buildDwelling, insidePolygon, SPOT_MIN_DIST } from "../server/dwelling-gen.ts";
 
 let passed = 0;
 const test = (name: string, fn: () => void) => {
@@ -284,6 +285,93 @@ test("buildSprite: structural failures", () => {
   raw.parts[1].id = "Body"; raw.parts[2].id = "<x>";
   const sp = buildSprite(raw);
   assert.deepEqual(sp.parts.map((p) => p.id), ["body", "body-2", "x"]);
+});
+
+// ---------------------------------------------------------------- buildDwelling
+
+const goodDwelling = (): any => ({
+  style: "watercolor",
+  footprint: [[10, 10], [150, 10], [150, 110], [80, 115], [10, 110]],
+  layers: [
+    { id: "ground", svg: `<rect x="10" y="10" width="140" height="100" fill="#5a8f3c"/>` + `<circle cx="20" cy="20" r="1" fill="#6b4"/>`.repeat(30), pivot: [80, 60] },
+    { id: "Structure", svg: `<defs><radialGradient id="lamp"><stop offset="0" stop-color="#ffd"/><stop offset="1" stop-color="#ffd" stop-opacity="0"/></radialGradient></defs><rect x="20" y="20" width="120" height="80" fill="none" stroke="#3b2a1a" stroke-width="4"/>`, pivot: [80, 60] },
+    { id: "decor", svg: `<circle cx="60" cy="40" r="6" fill="url(#lamp)"/><script>alert(1)</script>`, pivot: [80, 60] },
+    { id: "smoke", svg: `<circle cx="130" cy="15" r="4" fill="#ccc"/>`, pivot: [130, 18] },
+    { id: "roof", svg: `<rect x="20" y="20" width="120" height="80" fill="#a33"/>`, pivot: [80, 60] },
+  ],
+  anim: [
+    { layer: "smoke", type: "bob", amp: 2, period: 2, phase: 0 },
+    { layer: "nope", type: "bob", amp: 2, period: 2, phase: 0 },
+    { layer: "smoke", type: "pulse", amp: 999, period: 0.01, phase: 0.25 },
+  ],
+  spots: {
+    door: [80, 108], desk: [[30, 30], [50, 30], [31, 31], [70, 30], [90, 30], [110, 30], [130, 30], [130, 50]],
+    terminal: [30, 50], books: [50, 50], write: [70, 50], web: [90, 50], mcp: [110, 50], agent: [80, 70],
+    rest: [[30, 90], [500, 500]], bed: [[60, 90], [100, 90]],
+  },
+});
+
+test("buildDwelling: valid art is cleaned and repaired", () => {
+  const art = buildDwelling(goodDwelling(), { idPrefix: idPrefixFor("h_ab12") });
+  assert.equal(art.v, 1);
+  assert.equal(art.viewBox, "0 0 160 120");
+  assert.deepEqual(art.layers.map((l) => l.id), ["ground", "structure", "decor", "smoke", "roof"]);
+  assert.equal(art.layers.find((l) => l.id === "roof")!.optional, true);
+  assert.equal(art.layers.find((l) => l.id === "decor")!.svg, `<circle cx="60" cy="40" r="6" fill="url(#h-ab12-lamp)"/>`);
+  assert.deepEqual(art.anim, [
+    { layer: "smoke", type: "bob", amp: 2, period: 2 },
+    { layer: "smoke", type: "pulse", amp: 40, period: 0.2, phase: 0.25 },
+  ]);
+  // desk: [31,31] crowds [30,30] -> dropped; capped at 6
+  assert.deepEqual(art.spots.desk, [[30, 30], [50, 30], [70, 30], [90, 30], [110, 30], [130, 30]]);
+  // rest[1] was outside the canvas: clamped + pulled inside the footprint, still ≥ 8 apart from everything
+  assert.equal(art.spots.rest.length, 2);
+  const all: [number, number][] = [art.spots.door, ...art.spots.desk, art.spots.terminal, art.spots.books, art.spots.write,
+    art.spots.web, art.spots.mcp, art.spots.agent, ...art.spots.rest, ...art.spots.bed];
+  for (const p of all) assert.ok(insidePolygon(p, art.footprint), `inside: ${p}`);
+  for (let i = 0; i < all.length; i++) for (let j = i + 1; j < all.length; j++) {
+    assert.ok(Math.hypot(all[i][0] - all[j][0], all[i][1] - all[j][1]) >= SPOT_MIN_DIST, `apart: ${all[i]} ${all[j]}`);
+  }
+});
+
+test("buildDwelling: single spots too close are nudged apart, missing ones reject", () => {
+  const raw = goodDwelling();
+  raw.spots.books = [31, 50]; // 1 unit from terminal
+  const art = buildDwelling(raw);
+  assert.ok(Math.hypot(art.spots.books[0] - 30, art.spots.books[1] - 50) >= SPOT_MIN_DIST);
+  const raw2 = goodDwelling();
+  delete raw2.spots.mcp;
+  assert.throws(() => buildDwelling(raw2), /spot mcp/);
+  const raw3 = goodDwelling();
+  raw3.spots.bed = [];
+  assert.throws(() => buildDwelling(raw3), /bed/);
+});
+
+test("buildDwelling: footprint and layer checks", () => {
+  const bow = goodDwelling();
+  bow.footprint = [[10, 10], [150, 110], [150, 10], [10, 110]]; // bow tie
+  assert.throws(() => buildDwelling(bow), /crosses itself/);
+  const tiny = goodDwelling();
+  tiny.footprint = [[10, 10], [30, 10], [30, 30]];
+  assert.throws(() => buildDwelling(tiny), /quarter/);
+  const many = goodDwelling();
+  many.footprint = Array.from({ length: 60 }, (_, k) => [80 + 70 * Math.cos((k / 60) * 2 * Math.PI), 60 + 55 * Math.sin((k / 60) * 2 * Math.PI)]);
+  assert.equal(buildDwelling(many).footprint.length, 24);
+  // Too many layers: static extras fold into the layer below, animated ones survive.
+  const layered = goodDwelling();
+  for (let k = 0; k < 8; k++) layered.layers.splice(3, 0, { id: `bits${k}`, svg: `<rect x="${40 + k}" y="40" width="2" height="2" fill="#fff"/>`, pivot: [0, 0] });
+  const folded = buildDwelling(layered);
+  assert.deepEqual(folded.layers.map((l) => l.id), ["ground", "structure", "decor", "smoke", "roof"]);
+  assert.equal((folded.layers[2].svg.match(/<rect/g) ?? []).length, 8);
+  const noStructure = goodDwelling();
+  noStructure.layers = noStructure.layers.filter((l: any) => l.id !== "Structure");
+  assert.throws(() => buildDwelling(noStructure), /structure/);
+  // Dwellings get a bigger element budget than sprites (400), but it is still capped.
+  const big = goodDwelling();
+  big.layers[2].svg = `<circle cx="1" cy="1" r="1"/>`.repeat(900);
+  assert.ok(buildDwelling(big));
+  big.layers[2].svg = `<circle cx="1" cy="1" r="1"/>`.repeat(1300);
+  assert.throws(() => buildDwelling(big), /elements/);
 });
 
 console.log(`svg-sanitize: ${passed} tests passed`);
