@@ -313,3 +313,13 @@ dialog input {
 #invite-dialog code { font-size: 12px; overflow-wrap: anywhere; }
 .ok { color: var(--accent); min-height: 1em; }
 .small { font-size: 12px; }
+
+.lang-toggle { min-width: 44px; font-weight: 700; }
+
+.cc-block { margin: 12px 0; padding: 10px 12px; background: var(--bg2); border: 2px solid var(--accent); }
+.cc-label { margin: 0 0 8px; }
+.cc-lines { display: flex; flex-direction: column; gap: 6px; }
+.cc-line { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.cc-line code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; padding: 6px 8px; }
+.cc-line .btn { flex: none; }
+.invite-other { margin: 14px 0 6px; }

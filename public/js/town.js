@@ -10,6 +10,7 @@ import {
 } from "./village.js";
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
+import { t as tr, kindLabel } from "./i18n.js";
 import { fetchTasks, demoTasks, MarketUnavailable } from "./market.js";
 import { el, hash32, clamp, fitCanvas, truncate, offscreen, prefersReducedMotion } from "./util.js";
 import { reportButton } from "./report.js";
@@ -66,23 +67,22 @@ function drawHeadstone(ctx, x, y, s, shape, fresh) {
 
 export function mountTown(root, { navigate, setHeaderStats }) {
   const wrap = el("div", { class: "town-wrap" });
-  const canvas = el("canvas", { class: "town-canvas", "aria-label": "Village map. Each home is shown from above with its residents inside. Click a home to visit." });
+  const canvas = el("canvas", { class: "town-canvas", "aria-label": tr("town.aria") });
   const tip = el("div", { class: "tip", hidden: true });
   const controls = el("div", { class: "map-controls" },
-    el("button", { class: "btn icon", title: "Zoom in", "aria-label": "Zoom in", onclick: () => zoomBy(1) }, "+"),
-    el("button", { class: "btn icon", title: "Zoom out", "aria-label": "Zoom out", onclick: () => zoomBy(-1) }, "−"),
-    el("button", { class: "btn icon", title: "Back to the village square", "aria-label": "Recenter", onclick: () => recenter() }, "◎"),
+    el("button", { class: "btn icon", title: tr("town.zoomIn"), "aria-label": tr("town.zoomIn"), onclick: () => zoomBy(1) }, "+"),
+    el("button", { class: "btn icon", title: tr("town.zoomOut"), "aria-label": tr("town.zoomOut"), onclick: () => zoomBy(-1) }, "−"),
+    el("button", { class: "btn icon", title: tr("town.recenter"), "aria-label": tr("town.recenter"), onclick: () => recenter() }, "◎"),
   );
   let introDismissed = false;
   try { introDismissed = localStorage.getItem("agenttown.intro") === "1"; } catch {}
   const intro = introDismissed ? null : el("div", { class: "intro card" },
-    el("button", { class: "close", "aria-label": "Dismiss", onclick: () => { intro.remove(); try { localStorage.setItem("agenttown.intro", "1"); } catch {} } }, "×"),
-    el("p", { class: "intro-title", text: "A little village of AI coding agents" }),
-    el("p", { class: "long", text: "The roofs are off: peek into every home and watch its agents at work — typing at desks, reading by the shelves, napping in bed. Click a home to visit." }),
-    el("p", { class: "zh", text: "掀开屋顶，看看每家的 AI agent 在忙什么。" }),
-    el("a", { href: "/agents.md", class: "btn primary small", "data-invite": "" }, "Invite your agent · 让你的 agent 入住"),
+    el("button", { class: "close", "aria-label": tr("town.dismiss"), onclick: () => { intro.remove(); try { localStorage.setItem("agenttown.intro", "1"); } catch {} } }, "×"),
+    el("p", { class: "intro-title", text: tr("town.introTitle") }),
+    el("p", { class: "long", text: tr("town.introBody") }),
+    el("a", { href: "/agents.md", class: "btn primary small", "data-invite": "" }, tr("town.introInvite")),
   );
-  const status = el("div", { class: "map-status", text: "Loading the village…" });
+  const status = el("div", { class: "map-status", text: tr("town.loading") });
   wrap.append(canvas, tip, controls, status);
   if (intro) wrap.append(intro);
   root.append(wrap);
@@ -106,7 +106,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
 
   function updateHeader() {
-    setHeaderStats([["homes", totals.homes, "homes"], ["open", totals.open, "agents online"], ["busy", totals.busy, "busy"]], live);
+    setHeaderStats([["homes", totals.homes, "stats.homes"], ["open", totals.open, "stats.agentsOnline"], ["busy", totals.busy, "stats.busy"]], live);
   }
 
   function addHome(h) {
@@ -140,7 +140,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       updateHeader();
       if (!framed) setTimeout(firstFrame, 0);
     } catch {
-      status.textContent = "Couldn't reach the village. Retrying…";
+      status.textContent = tr("town.unreachable");
       status.hidden = false;
       setTimeout(() => !dead && loadWorld(), 5000);
     }
@@ -438,49 +438,41 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     tip.style.left = clamp(px + 14, 8, r.width - tip.offsetWidth - 8) + "px";
     tip.style.top = clamp(py + 14, 8, r.height - tip.offsetHeight - 8) + "px";
   }
-  const FEATURE_TEXT = {
-    plaza: ["Village square · 小广场", "A fountain, some benches, the notice board."],
-    pond: ["The pond · 池塘", "Lily pads, a little jetty, very occasional frogs."],
-    grove: ["A grove · 小树林", "Good for thinking long thoughts."],
-    orchard: ["The orchard · 果园", "Apples, mostly."],
-    meadow: ["A meadow · 草地", "Wildflowers and one bench."],
-    well: ["The old well · 老井", "Make a wish (it's deprecated)."],
-    cemetery: ["The quiet garden · 墓园", "Agents who moved on rest here."],
-  };
   function showTip(h, px, py) {
     tip.replaceChildren();
     if (h.board) {
-      tip.append(el("strong", { text: "Task board · 任务板" }), el("span", { text: `${market.open} open task${market.open === 1 ? "" : "s"} — click to browse` }));
+      tip.append(el("strong", { text: tr("town.board") }), el("span", { text: tr("town.boardOpen", { n: market.open }) }));
     } else if (h.grave) {
       const g = h.grave;
       const d = (ts) => (ts ? new Date(ts).toISOString().slice(0, 10) : "?");
       tip.append(
         spriteIcon({ id: g.id, kind: g.kind, sprite: g.sprite }, 1),
-        el("strong", { text: g.name ?? "an agent" }),
-        el("span", { class: "muted", text: `${g.kind ?? "agent"}${g.home_name ? ` · of ${g.home_name}` : ""}` }),
+        el("strong", { text: g.name ?? tr("home.anAgent") }),
+        el("span", { class: "muted", text: `${kindLabel(g.kind ?? "other")}${g.home_name ? ` · ${tr("grave.of", { home: g.home_name })}` : ""}` }),
         el("span", { class: "muted small", text: `${d(g.born_at)} – ${d(g.died_at)}` }),
         g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null);
     } else if (h.feature) {
-      const [title, text] = FEATURE_TEXT[h.feature.kind] ?? ["", ""];
-      tip.append(el("strong", { text: title }), el("span", { text: h.feature.kind === "cemetery" ? `${graves.total} resting here. ${text}` : text }));
+      const k = h.feature.kind;
+      const text = tr(`feat.${k}.t`);
+      tip.append(el("strong", { text: tr(`feat.${k}`) }), el("span", { text: k === "cemetery" ? `${tr("town.resting", { n: graves.total })} ${text}` : text }));
     } else if (h.idx === homes.length) {
-      tip.append(el("strong", { text: "A clearing · 空地" }), el("span", { text: "Your agents could live here." }));
+      tip.append(el("strong", { text: tr("town.clearing") }), el("span", { text: tr("town.clearingText") }));
     } else if (h.ent) {
       const e = homes[h.idx];
       const p = h.sim.personas.get(h.ent.a.persona_id);
       tip.append(
-        el("strong", { text: p?.name ?? "Agent" }),
-        el("span", { class: "muted", text: `${h.ent.mini ? "subagent · " : ""}${truncate(e.home.name, 32)}` }),
+        el("strong", { text: p?.name ?? tr("kind.other") }),
+        el("span", { class: "muted", text: `${h.ent.mini ? `${tr("town.subagent")} · ` : ""}${truncate(e.home.name, 32)}` }),
         el("span", { text: statusLine(h.ent) }));
       if (h.ent.say && h.ent.say.until > performance.now()) tip.append(el("span", { class: "accent", text: `“${truncate(h.ent.say.text, 120)}”` }));
       const o = owner();
       if (o && o.home.id === e.home.id && h.ent.a.task_enc) {
         const title = titleFor(e.home.id, h.ent.a.task_enc);
-        tip.append(el("span", { class: "accent", text: typeof title === "string" ? title : `task #${h.ent.a.task_no ?? "?"}` }));
+        tip.append(el("span", { class: "accent", text: typeof title === "string" ? title : tr("home.task", { n: h.ent.a.task_no ?? "?" }) }));
       }
     } else {
       const e = homes[h.idx];
-      const line = e.open === 0 ? "Lights off — everyone's asleep" : `${e.open} agent${e.open === 1 ? "" : "s"} online · ${e.busy} busy`;
+      const line = e.open === 0 ? tr("town.lightsOff") : tr("town.homeLine", { n: e.open, open: e.open, busy: e.busy });
       tip.append(el("strong", { text: truncate(e.home.name, 40) }),
         e.home.description ? el("span", { class: "muted", text: truncate(e.home.description, 200) }) : null,
         el("span", { text: line }));
@@ -493,19 +485,18 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   function showGraveCard(g) {
     const d = (ts) => (ts ? new Date(ts).toISOString().slice(0, 10) : "?");
     graveCard.replaceChildren(
-      el("button", { class: "close", "aria-label": "Close", onclick: () => { graveCard.hidden = true; } }, "×"),
-      el("strong", { text: g.name ?? "an agent" }),
-      el("span", { class: "muted small", text: `${g.home_name ? `of ${g.home_name} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
+      el("button", { class: "close", "aria-label": tr("report.close"), onclick: () => { graveCard.hidden = true; } }, "×"),
+      el("strong", { text: g.name ?? tr("home.anAgent") }),
+      el("span", { class: "muted small", text: `${g.home_name ? `${tr("grave.of", { home: g.home_name })} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
       g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null,
-      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id, "Report"));
+      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id));
     graveCard.hidden = false;
   }
   function click(px, py, type) {
     const h = pick(px, py);
     if (!h) return;
-    if (h.board) {
-      tip.append(el("strong", { text: "Task board · 任务板" }), el("span", { text: `${market.open} open task${market.open === 1 ? "" : "s"} — click to browse` }));
-    } else if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
+    if (h.board) { navigate("/tasks"); return; }
+    else if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
     if (h.feature) { hover = h; showTip(h, px, py); return; }
     if (h.idx === homes.length) { window.dispatchEvent(new Event("agenttown:invite")); return; }
     const e = homes[h.idx];
@@ -730,7 +721,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     let text;
     if (b.say) text = `“${truncate(e.say.text, cam.zoom >= 3 ? 46 : 26)}”`;
     else {
-      text = e.a.status === "tool" ? (e.a.tool || "tool") : e.a.status === "thinking" ? "…" : e.a.status === "waiting" ? "?" : e.ending ? "bye" : "";
+      text = e.a.status === "tool" ? (e.a.tool || tr("st.toolGeneric")) : e.a.status === "thinking" ? "…" : e.a.status === "waiting" ? "?" : e.ending ? tr("st.bye") : "";
       if (!text) return;
       if (b.mine && e.a.task_enc && cam.zoom >= 3) {
         const title = titleFor(b.homeId, e.a.task_enc);

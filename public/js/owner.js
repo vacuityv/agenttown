@@ -66,7 +66,7 @@ export function titleFor(homeId, titleEnc, onReady) {
 
 export async function login(ownerKey) {
   ownerKey = ownerKey.trim();
-  if (!looksLikeOwnerKey(ownerKey)) throw new Error("That doesn't look like an owner key (it starts with atk_).");
+  if (!looksLikeOwnerKey(ownerKey)) throw Object.assign(new Error("bad owner key"), { code: "bad_key" });
   const { authToken, encKey } = await deriveKeys(ownerKey);
   const me = await api("/me", { token: authToken });
   state = { ownerKey, authToken, encKey, home: me.home };
