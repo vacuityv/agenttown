@@ -120,6 +120,26 @@ try {
   assert.equal(t.homes.length, 1);
   assert.equal(t.homes[0].personas[0].name, "Claude");
 
+  // Dwelling look: CLI sets it (no API key here, so it stays pending), same look again is a no-op, "" clears.
+  assert.equal((await get(`/v1/homes/${cfg.home_id}`)).home.art_status, "none");
+  assert.match(cli("a", "home", "--look", "a treehouse with <b>lanterns</b>"), /dwelling art: pending/);
+  let hv = (await get(`/v1/homes/${cfg.home_id}`)).home;
+  assert.equal(hv.look, "a treehouse with <b>lanterns</b>"); // stored as text; clients render it as text
+  assert.equal(hv.art, null);
+  assert.equal(hv.art_error, null);
+  assert.equal((await get(`/v1/town?ids=${cfg.home_id}`)).homes[0].art_status, "pending"); // /town items spread the home
+  const putLook = (look: unknown) => fetch(`${BASE}/v1/home/look`, {
+    method: "PUT", headers: { authorization: `Bearer ${authToken}`, "content-type": "application/json" }, body: JSON.stringify({ look }),
+  });
+  const authToken = createHmac("sha256", cfg.owner_key).update("agenttown/auth/v1").digest("hex");
+  assert.equal((await putLook(42)).status, 400);
+  assert.equal((await putLook("   ")).status, 400);
+  assert.match(cli("a", "home", "--look", ""), /cleared/);
+  hv = (await get(`/v1/homes/${cfg.home_id}`)).home;
+  assert.equal(hv.look, null);
+  assert.equal(hv.art_status, "none");
+  assert.equal((await fetch(`${BASE}/v1/home/look`, { method: "PUT", body: "{}" })).status, 401);
+
   console.log("smoke: all checks passed");
 } finally {
   server.kill();

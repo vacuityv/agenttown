@@ -11,7 +11,7 @@ const day = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 const sql = {
   homeByAuth: "SELECT id, slot, name, created_at, dwelling, style, description FROM homes WHERE auth_hash = ?",
-  homeById: "SELECT id, slot, name, created_at, dwelling, style, description FROM homes WHERE id = ?",
+  homeById: "SELECT id, slot, name, created_at, dwelling, style, description, look, art, art_status, art_error FROM homes WHERE id = ?",
   insertHome: "INSERT INTO homes (id, auth_hash, name, created_at) VALUES (?, ?, ?, ?)",
   renameHome: "UPDATE homes SET name = ? WHERE id = ?",
   // LAST_INSERT_ID(expr) hands the new value back in the OK packet (insertId) of this very statement.
@@ -67,6 +67,15 @@ const sql = {
 export const publicHome = (h: Row) => ({
   id: h.id, slot: h.slot, name: h.name, created_at: h.created_at, dwelling: h.dwelling ?? null,
   style: h.style ?? null, description: h.description ?? null,
+  ...publicLook(h),
+});
+
+// Dwelling art (docs/protocol.md "Dwelling art v1"); a separate helper so other publicHome fields merge cleanly.
+const publicLook = (h: Row) => ({
+  look: h.look ?? null,
+  art: h.art ? JSON.parse(h.art) : null,
+  art_status: h.art_status ?? "none",
+  art_error: h.art_status === "failed" ? (h.art_error ?? null) : null,
 });
 
 export const publicPersona = (p: Row) => ({
@@ -157,6 +166,20 @@ export const homeById = (id: string) => one(db(), sql.homeById, [id]);
 
 export async function renameHome(id: string, name: string) {
   await run(db(), sql.renameHome, [name, id]);
+  const home = publicHome((await one(db(), sql.homeById, [id]))!);
+  bus.emit({ type: "home", home_id: id, data: home });
+  return home;
+}
+
+/** Sets the home's look and queues dwelling generation; null clears look and art. Repeating the same look is a
+ *  no-op unless the last generation failed (then it is queued again; the daily cap still applies). */
+export async function setLook(id: string, look: string | null) {
+  if (look === null) {
+    await run(db(), "UPDATE homes SET look = NULL, art = NULL, art_status = 'none', art_error = NULL WHERE id = ?", [id]);
+  } else {
+    await run(db(), `UPDATE homes SET look = ?, art_status = 'pending', art_error = NULL
+      WHERE id = ? AND NOT (look <=> ? AND art_status IN ('pending', 'ready'))`, [look, id, look]);
+  }
   const home = publicHome((await one(db(), sql.homeById, [id]))!);
   bus.emit({ type: "home", home_id: id, data: home });
   return home;
@@ -275,7 +298,7 @@ export async function town(homeIds: string[]) {
     const h = await homeById(id);
     if (!h) return [];
     return [{
-      ...publicHome(h),
+      ...publicHome(h), // includes slot, dwelling/style and the dwelling art
       personas: await personasOfHome(id),
       agents: (await all(db(), sql.openSessionsOfHome, [id])).map(townAgent),
       says: await recentSays(id, 5),
