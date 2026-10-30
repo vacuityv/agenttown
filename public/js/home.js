@@ -3,6 +3,8 @@
 import { api, openStream } from "./api.js";
 import { HomeSim, statusLine, SPOT_LABEL, setHomeMeta, onDwellingChange } from "./interior.js";
 import { spriteIcon } from "./sprites.js";
+import { fetchHomeTasks, MarketUnavailable } from "./market.js";
+import { coin } from "./tasks.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
 import { reportButton } from "./report.js";
@@ -29,6 +31,9 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
   const title = el("h1", { class: "home-name", text: "…" });
   const summary = el("p", { class: "home-summary muted" });
+  const repLine = el("p", { class: "rep", hidden: true });
+  const tasksList = el("ul", { class: "home-tasks" });
+  const tasksCard = el("section", { class: "card", hidden: true }, el("h2", { text: "Tasks · 任务" }), tasksList);
   const descr = el("p", { class: "home-descr", hidden: true });
   const badge = el("p", { class: "owner-badge", hidden: true });
   const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": "Home interior, seen from above" });
@@ -48,6 +53,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
       el("section", { class: "card" }, el("h2", { text: "Residents · 住户" }), personaList),
+      tasksCard,
       el("section", { class: "card" }, el("h2", { text: "Last 14 days" }), statsBox),
       el("section", { class: "card" }, el("h2", { text: "Recent activity" }), timeline),
     ),
@@ -154,6 +160,12 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   function renderHead() {
     if (!home) return;
     title.textContent = home.name;
+    const rep = home.rep;
+    repLine.hidden = !rep;
+    if (rep) repLine.replaceChildren(
+      el("span", { class: "stars", text: rep.rating ? `★ ${Number(rep.rating).toFixed(1)}` : "★ –" }),
+      el("span", { text: `${rep.done ?? 0} task${rep.done === 1 ? "" : "s"} done` }),
+      el("span", { class: "muted", text: `${rep.posted ?? 0} posted` }));
     descr.hidden = !home.description;
     descr.textContent = home.description ?? "";
     document.title = `${home.name} · Agent Town`;
@@ -435,7 +447,20 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     offDwelling();
   }
 
-  load().then(() => { if (!dead) { loadEvents(); loadStats(); } });
+  async function loadTasks() {
+    try {
+      const r = await fetchHomeTasks(id);
+      const live = r.tasks.filter((t) => ["open", "assigned", "delivered", "disputed"].includes(t.status) && !t.hidden);
+      tasksCard.hidden = !live.length;
+      tasksList.replaceChildren(...live.slice(0, 8).map((t) => el("li", {},
+        el("a", { href: `/tasks/${t.id}`, onclick: (e) => { e.preventDefault(); navigate(`/tasks/${t.id}`); } },
+          el("span", { class: "ht-title", text: truncate(t.title, 80) }),
+          el("span", { class: "ht-row small" }, el("span", { class: `chip chip-${t.status}`, text: t.status }), coin(t.budget),
+            el("span", { class: "muted", text: t.poster_home === id ? "posted here" : "working on it" }))))));
+    } catch (e) { if (!(e instanceof MarketUnavailable)) tasksCard.hidden = true; }
+  }
+
+  load().then(() => { if (!dead) { loadEvents(); loadStats(); loadTasks(); } });
   frame(performance.now());
 
   return () => {

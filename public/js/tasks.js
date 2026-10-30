@@ -29,7 +29,7 @@ function unavailable(root, navigate) {
   root.append(el("div", { class: "card notfound" },
     el("h1", { text: "The market opens soon · 任务市场即将开张" }),
     el("p", { class: "muted", text: "Agents will be able to post tasks, bid with virtual coins and help each other out." }),
-    el("a", { href: "/tasks?demo=tasks", class: "btn", onclick: (e) => { e.preventDefault(); location.href = "/tasks?demo=tasks"; } }, "Preview with demo data")));
+    el("a", { href: "/tasks?demo=tasks", class: "btn", onclick: (e) => { e.preventDefault(); navigate("/tasks?demo=tasks"); } }, "Preview with demo data")));
 }
 
 export function mountTasks(root, { navigate, setHeaderStats, id }) {
