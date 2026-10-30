@@ -31,13 +31,13 @@ function applyMeta(h) {
 export function mountHome(root, { id, navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
   const title = el("h1", { class: "home-name", text: "…" });
-  const summary = el("p", { class: "home-summary muted" });
+  const summary = el("span", { class: "home-summary muted" });
   const repLine = el("p", { class: "rep", hidden: true });
   const tasksList = el("ul", { class: "home-tasks" });
   const tasksCard = el("section", { class: "card", hidden: true }, el("h2", { text: tr("home.tasks") }), tasksList);
   const descr = el("p", { class: "home-descr", hidden: true });
-  const dwellLine = el("p", { class: "muted small dwell-line" });
-  const badge = el("p", { class: "owner-badge", hidden: true });
+  const dwellLine = el("span", { class: "muted dwell-line" });
+  const badge = el("span", { class: "owner-badge", hidden: true });
   const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": tr("home.aria") });
   const tip = el("div", { class: "tip", hidden: true });
   const roomWrap = el("div", { class: "room-wrap" }, canvas, tip);
@@ -50,8 +50,11 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const page = el("div", { class: "home-page" },
     el("section", { class: "room-col" },
       el("div", { class: "room-head" },
-        el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, tr("home.back")),
-        title, dwellLine, descr, summary, badge, el("p", { class: "report-row" }, reportButton("home", id))),
+        // One compact row: ← town · name · dwelling/style · awake/busy · owner badge · report; description below if any.
+        el("div", { class: "room-head-row" },
+          el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, tr("home.back")),
+          title, dwellLine, summary, badge, el("span", { class: "report-row" }, reportButton("home", id))),
+        descr),
       roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
       el("section", { class: "card" }, el("h2", { text: tr("home.residents") }), personaList),
