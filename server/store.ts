@@ -10,8 +10,8 @@ const BUSY = new Set<string>(["thinking", "tool"]);
 const day = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 const sql = {
-  homeByAuth: "SELECT id, name, created_at FROM homes WHERE auth_hash = ?",
-  homeById: "SELECT id, name, created_at FROM homes WHERE id = ?",
+  homeByAuth: "SELECT id, slot, name, created_at, dwelling, style, description FROM homes WHERE auth_hash = ?",
+  homeById: "SELECT id, slot, name, created_at, dwelling, style, description FROM homes WHERE id = ?",
   insertHome: "INSERT INTO homes (id, auth_hash, name, created_at) VALUES (?, ?, ?, ?)",
   renameHome: "UPDATE homes SET name = ? WHERE id = ?",
   // LAST_INSERT_ID(expr) hands the new value back in the OK packet (insertId) of this very statement.
@@ -64,7 +64,10 @@ const sql = {
 
 // ---- public shapes (what anyone may see) ----
 
-export const publicHome = (h: Row) => ({ id: h.id, name: h.name, created_at: h.created_at });
+export const publicHome = (h: Row) => ({
+  id: h.id, slot: h.slot, name: h.name, created_at: h.created_at, dwelling: h.dwelling ?? null,
+  style: h.style ?? null, description: h.description ?? null,
+});
 
 export const publicPersona = (p: Row) => ({
   id: p.id,
@@ -269,11 +272,13 @@ export const openSessionsOfHome = async (homeId: string) =>
 // Batch lookup for the town view: residents and their open sessions for the visible homes.
 export async function town(homeIds: string[]) {
   const out = await Promise.all(homeIds.map(async (id) => {
-    if (!(await homeById(id))) return [];
+    const h = await homeById(id);
+    if (!h) return [];
     return [{
-      id,
+      ...publicHome(h),
       personas: await personasOfHome(id),
       agents: (await all(db(), sql.openSessionsOfHome, [id])).map(townAgent),
+      says: await recentSays(id, 5),
     }];
   }));
   return out.flat();
@@ -282,11 +287,11 @@ export async function town(homeIds: string[]) {
 // ---- world / stats ----
 
 const worldSql = `
-  SELECT h.id, h.name, h.created_at,
+  SELECT h.id, h.slot, h.name, h.created_at, h.dwelling, h.style, h.description,
     COUNT(s.id) AS open,
     COALESCE(SUM(s.status IN ('thinking', 'tool')), 0) AS busy
   FROM homes h LEFT JOIN sessions s ON s.home_id = h.id AND s.ended_at IS NULL
-  GROUP BY h.id ORDER BY h.created_at LIMIT ? OFFSET ?`;
+  GROUP BY h.id ORDER BY h.slot LIMIT ? OFFSET ?`;
 const totalsSql = `
   SELECT (SELECT COUNT(*) FROM homes) AS homes,
     (SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL) AS open,
@@ -333,4 +338,359 @@ export async function sweep() {
   });
   for (const id of ended) await emitSession(id);
   return ended.length;
+}
+
+// =====================================================================================================
+// ---- free town: home customization, says, retiring & the cemetery ----
+// (kept in its own section to ease merging with avatar/sprite work)
+// =====================================================================================================
+
+export const DWELLINGS = [
+  "house", "cottage", "fenced-yard", "garden", "tent", "treehouse", "burrow", "greenhouse", "pond", "shed",
+  "lighthouse", "cave", "mushroom-ring", "boat",
+] as const;
+export const STYLES = ["pixel", "flat", "sketch", "watercolor", "lowpoly", "blueprint", "neon", "storybook"] as const;
+
+export type HomePatch = { name?: string; dwelling?: string | null; style?: string | null; description?: string | null };
+
+export async function customizeHome(id: string, patch: HomePatch) {
+  const cols: string[] = [];
+  const vals: unknown[] = [];
+  for (const k of ["name", "dwelling", "style", "description"] as const) {
+    if (patch[k] !== undefined) { cols.push(`${k} = ?`); vals.push(patch[k]); }
+  }
+  if (cols.length) await run(db(), `UPDATE homes SET ${cols.join(", ")} WHERE id = ?`, [...vals, id]);
+  const home = publicHome((await one(db(), sql.homeById, [id]))!);
+  bus.emit({ type: "home", home_id: id, data: home });
+  return home;
+}
+
+// -- says: short public status posts by a persona --
+
+export const SAYS_KEPT = 50;
+const saysSql = {
+  insert: "INSERT INTO says (home_id, persona_id, text, ts) VALUES (?, ?, ?, ?)",
+  // Keep the newest SAYS_KEPT per home. The derived table sidesteps MySQL's "no LIMIT in IN-subquery" rule.
+  prune: `
+    DELETE FROM says WHERE home_id = ? AND id <= (
+      SELECT id FROM (SELECT id FROM says WHERE home_id = ? ORDER BY id DESC LIMIT 1 OFFSET ${SAYS_KEPT}) x)`,
+  recent: "SELECT persona_id, text, ts FROM says WHERE home_id = ? ORDER BY id DESC LIMIT ?",
+};
+
+/** Posts a say for an existing persona. `check(personaId)` runs before the insert (rate limits). */
+export async function say(homeId: string, personaName: string, text: string, check: (personaId: string) => void) {
+  const p = await one(db(), sql.personaByName, [homeId, personaName]);
+  if (!p) throw new ApiError(404, "unknown_persona", "No persona with that name in this home. Create it first (`agenttown persona`).");
+  check(p.id);
+  const ts = Date.now();
+  await run(db(), saysSql.insert, [homeId, p.id, text, ts]);
+  await run(db(), saysSql.prune, [homeId, homeId]);
+  const out = { persona_id: p.id as string, text, ts };
+  bus.emit({ type: "say", home_id: homeId, data: out });
+  return out;
+}
+
+export const recentSays = (homeId: string, limit = 10) => all(db(), saysSql.recent, [homeId, limit]);
+
+// -- tombstones --
+
+export const publicTombstone = (t: Row) => ({
+  id: t.id,
+  home_id: t.home_id,
+  persona_id: t.persona_id,
+  name: t.name,
+  kind: t.kind,
+  home_name: t.home_name,
+  appearance: t.appearance,
+  sprite: t.sprite ? JSON.parse(t.sprite) : null,
+  born_at: t.born_at,
+  died_at: t.died_at,
+  epitaph: t.epitaph,
+});
+
+const graveSql = {
+  insert: `
+    INSERT INTO tombstones (id, home_id, persona_id, name, kind, home_name, appearance, sprite, born_at, died_at, epitaph)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+  list: "SELECT * FROM tombstones ORDER BY died_at DESC, id DESC LIMIT ? OFFSET ?",
+  count: "SELECT COUNT(*) AS n FROM tombstones",
+};
+
+async function bury(c: Q, home: Row, p: Row | null, now: number, epitaph: string | null) {
+  const t = {
+    id: newId("t"), home_id: home.id, persona_id: p?.id ?? null, name: p?.name ?? home.name, kind: p?.kind ?? "home",
+    home_name: home.name, appearance: p?.appearance ?? null, sprite: p?.sprite ?? null,
+    born_at: p?.created_at ?? home.created_at, died_at: now, epitaph,
+  };
+  await run(c, graveSql.insert, [t.id, t.home_id, t.persona_id, t.name, t.kind, t.home_name, t.appearance, t.sprite,
+    t.born_at, t.died_at, t.epitaph]);
+  return publicTombstone(t);
+}
+
+export async function cemetery(limit: number, offset: number) {
+  const [count, rows] = await Promise.all([one(db(), graveSql.count), all(db(), graveSql.list, [limit, offset])]);
+  return { total: count!.n as number, tombstones: rows.map(publicTombstone) };
+}
+
+// A session row that no longer exists (deleted with its persona): tell both feeds it ended.
+function emitGone(s: Row) {
+  bus.emit({ type: "session", home_id: s.home_id, data: { ...publicSession(s), status: "ended", tool: null } });
+  bus.emit({ type: "agent", home_id: s.home_id, data: { ...townAgent(s), status: "ended", tool: null } });
+}
+
+/** Ends the persona's open sessions (and their subagents), buries it and deletes it. */
+export async function retirePersona(homeId: string, ref: { id?: string; name?: string }, epitaph: string | null) {
+  const ended: string[] = [];
+  let gone: Row[] = [];
+  const stone = await tx(async (c) => {
+    ended.length = 0;
+    const home = (await one(c, "SELECT * FROM homes WHERE id = ? FOR UPDATE", [homeId]))!;
+    const p = ref.id
+      ? await one(c, "SELECT * FROM personas WHERE home_id = ? AND id = ? FOR UPDATE", [homeId, ref.id])
+      : await one(c, "SELECT * FROM personas WHERE home_id = ? AND name = ? FOR UPDATE", [homeId, ref.name ?? ""]);
+    if (!p) throw new ApiError(404, "not_found", "No such persona in this home.");
+    const now = Date.now();
+    for (const s of await all(c, "SELECT id FROM sessions WHERE persona_id = ? AND ended_at IS NULL", [p.id])) {
+      await run(c, sql.endSession, [now, s.id]);
+      ended.push(s.id);
+      await endTree(c, s.id, now, ended);
+    }
+    gone = ended.length ? await all(c, "SELECT * FROM sessions WHERE id IN (?) AND persona_id = ?", [ended, p.id]) : [];
+    const t = await bury(c, home, p, now, epitaph);
+    await run(c, "DELETE FROM events WHERE session_id IN (SELECT id FROM sessions WHERE persona_id = ?)", [p.id]);
+    await run(c, "DELETE FROM personas WHERE id = ?", [p.id]); // cascades sessions, says
+    return t;
+  });
+  const goneIds = new Set(gone.map((s) => s.id));
+  for (const s of gone) emitGone(s);
+  for (const id of ended) if (!goneIds.has(id)) await emitSession(id); // other personas' subagents
+  if (ended.length) scheduleCounts(homeId);
+  bus.emit({ type: "tombstone", home_id: homeId, data: stone });
+  return stone;
+}
+
+/** Buries every persona (or the home itself if empty) and deletes the home and everything under it. */
+export async function deleteHome(homeId: string, epitaph: string | null) {
+  const stones = await tx(async (c) => {
+    const home = await one(c, "SELECT * FROM homes WHERE id = ? FOR UPDATE", [homeId]);
+    if (!home) throw new ApiError(404, "not_found", "No such home.");
+    const now = Date.now();
+    const personas = await all(c, "SELECT * FROM personas WHERE home_id = ? ORDER BY created_at", [homeId]);
+    const out = [];
+    for (const p of personas.length ? personas : [null]) out.push(await bury(c, home, p, now, epitaph));
+    for (const t of ["events", "daily_stats", "tool_stats", "avatar_usage"]) {
+      await run(c, `DELETE FROM ${t} WHERE home_id = ?`, [homeId]);
+    }
+    // Cascades personas, sessions, says, invites, devices. The auth hash goes with it.
+    await run(c, "DELETE FROM homes WHERE id = ?", [homeId]);
+    return out;
+  });
+  clearTimeout(countsPending.get(homeId));
+  countsPending.delete(homeId);
+  for (const t of stones) bus.emit({ type: "tombstone", home_id: homeId, data: t });
+  bus.emit({ type: "home_removed", home_id: homeId, data: {} });
+  return stones;
+}
+
+// =====================================================================================================
+// ---- invites & device credentials ----
+// An invite carries the home's enc_key wrapped under a key derived from a secret that only the invite code
+// holder has; the server stores the opaque blob and hands it out once. Devices authenticate with their own
+// token (sha256 stored), never with the owner key.
+// =====================================================================================================
+
+export type Auth = {
+  home: Row; scope: "owner" | "device"; device_id: string | null; rekey_blob: string | null;
+};
+
+const devSql = {
+  byAuth: `
+    SELECT d.id AS device_id, d.last_seen_at, d.needs_rekey, d.rekey_blob, h.id, h.slot, h.name, h.created_at, h.dwelling, h.style, h.description
+    FROM devices d JOIN homes h ON h.id = d.home_id WHERE d.auth_hash = ? AND d.revoked_at IS NULL`,
+  touch: "UPDATE devices SET last_seen_at = ? WHERE id = ?",
+  insertInvite: "INSERT INTO invites (id, home_id, kind, blob_enc, label, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+  openInvites: "SELECT COUNT(*) AS n FROM invites WHERE home_id = ? AND used_at IS NULL AND expires_at > ?",
+  inviteForUpdate: "SELECT * FROM invites WHERE id = ? FOR UPDATE",
+  useInvite: "UPDATE invites SET used_at = ? WHERE id = ?",
+  insertDevice: "INSERT INTO devices (id, home_id, auth_hash, label, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)",
+  activeDevices: "SELECT COUNT(*) AS n FROM devices WHERE home_id = ? AND revoked_at IS NULL",
+  list: "SELECT id, label, created_at, last_seen_at, revoked_at FROM devices WHERE home_id = ? ORDER BY created_at",
+  revoke: "UPDATE devices SET revoked_at = ? WHERE home_id = ? AND id = ? AND revoked_at IS NULL",
+};
+
+export const DEVICE_LIMIT = 50;
+
+export async function authByHash(hash: string): Promise<Auth | null> {
+  const owner = await homeByAuth(hash);
+  if (owner) return { home: owner, scope: "owner", device_id: null, rekey_blob: null };
+  const d = await one(db(), devSql.byAuth, [hash]);
+  if (!d) return null;
+  const now = Date.now();
+  if (!d.last_seen_at || now - d.last_seen_at > 60_000) {
+    run(db(), devSql.touch, [now, d.device_id]).catch(logErr("device touch failed"));
+  }
+  return { home: d, scope: "device", device_id: d.device_id, rekey_blob: d.needs_rekey ? d.rekey_blob : null };
+}
+
+export async function createInvite(homeId: string, kind: "join" | "merge", blob: string, label: string | null, ttlMs: number) {
+  const now = Date.now();
+  if ((await one(db(), devSql.openInvites, [homeId, now]))!.n >= 10) {
+    throw new ApiError(429, "too_many_invites", "Too many open invites; wait for them to expire.");
+  }
+  const id = newId("i", 8).slice(2);
+  await run(db(), devSql.insertInvite, [id, homeId, kind, blob, label, now, now + ttlMs]);
+  return { id, kind, expires_at: now + ttlMs };
+}
+
+export async function redeemInvite(id: string, authHash: string, label: string | null) {
+  return tx(async (c) => {
+    const inv = await one(c, devSql.inviteForUpdate, [id]);
+    const now = Date.now();
+    if (!inv || inv.kind !== "join") throw new ApiError(404, "invite_not_found", "No such join invite.");
+    if (inv.used_at !== null) throw new ApiError(410, "invite_used", "This invite was already used. Ask for a new one.");
+    if (inv.expires_at <= now) throw new ApiError(410, "invite_expired", "This invite expired. Ask for a new one.");
+    if ((await one(c, devSql.activeDevices, [inv.home_id]))!.n >= DEVICE_LIMIT) {
+      throw new ApiError(429, "too_many_devices", `A home can have at most ${DEVICE_LIMIT} devices.`);
+    }
+    const deviceId = newId("d");
+    try {
+      await run(c, devSql.insertDevice, [deviceId, inv.home_id, authHash, label ?? inv.label, now, now]);
+    } catch (e: any) {
+      if (e?.code === "ER_DUP_ENTRY") throw new ApiError(409, "token_in_use", "That device token is already registered.");
+      throw e;
+    }
+    await run(c, devSql.useInvite, [now, id]);
+    const home = (await one(c, sql.homeById, [inv.home_id]))!;
+    return { blob: inv.blob_enc as string, home: { id: home.id, name: home.name }, device_id: deviceId };
+  });
+}
+
+export const listDevices = (homeId: string) => all(db(), devSql.list, [homeId]);
+
+export async function revokeDevice(homeId: string, id: string) {
+  const r = await run(db(), devSql.revoke, [Date.now(), homeId, id]);
+  if (!r.affectedRows) throw new ApiError(404, "not_found", "No such active device.");
+}
+
+// =====================================================================================================
+// ---- merging homes: B (the caller, owner scope) moves into A (who issued a merge invite) ----
+// =====================================================================================================
+
+export type MergeOutcome = { id: string; from_name: string; name: string; action: "moved" | "renamed" | "merged" };
+
+/** Picks a name ≤ 32 chars that is not in `taken`. */
+function freeName(base: string, suffix: string, taken: Set<string>) {
+  for (let i = 1; ; i++) {
+    const tail = i === 1 ? ` (${suffix})` : ` (${suffix} ${i})`;
+    const name = [...base].slice(0, Math.max(1, 32 - [...tail].length)).join("") + tail;
+    const cut = [...name].slice(0, 32).join("");
+    if (!taken.has(cut)) return cut;
+  }
+}
+
+// Sum B's per-day counters into A's (INSERT … SELECT from a derived table, then drop B's rows).
+const mergeStatsSql = [
+  `INSERT INTO daily_stats (home_id, day, busy_ms, tasks)
+     SELECT * FROM (SELECT ? AS home_id, day, busy_ms, tasks FROM daily_stats WHERE home_id = ?) AS b
+   ON DUPLICATE KEY UPDATE busy_ms = daily_stats.busy_ms + b.busy_ms, tasks = daily_stats.tasks + b.tasks`,
+  `INSERT INTO tool_stats (home_id, day, tool, count)
+     SELECT * FROM (SELECT ? AS home_id, day, tool, count FROM tool_stats WHERE home_id = ?) AS b
+   ON DUPLICATE KEY UPDATE count = tool_stats.count + b.count`,
+  `INSERT INTO avatar_usage (home_id, day, count)
+     SELECT * FROM (SELECT ? AS home_id, day, count FROM avatar_usage WHERE home_id = ?) AS b
+   ON DUPLICATE KEY UPDATE count = avatar_usage.count + b.count`,
+];
+
+export async function mergeHomes(inviteId: string, bId: string, rekeyBlob: string, onConflict: "merge" | "rename") {
+  const result = await tx(async (c) => {
+    const inv = await one(c, devSql.inviteForUpdate, [inviteId]);
+    const now = Date.now();
+    if (!inv || inv.kind !== "merge") throw new ApiError(404, "invite_not_found", "No such merge invite.");
+    if (inv.used_at !== null) throw new ApiError(410, "invite_used", "This invite was already used. Ask for a new one.");
+    if (inv.expires_at <= now) throw new ApiError(410, "invite_expired", "This invite expired. Ask for a new one.");
+    const aId = inv.home_id as string;
+    if (aId === bId) throw new ApiError(400, "same_home", "That invite is for this very home.");
+    // Lock both homes in a fixed order.
+    const locked = await all(c, "SELECT * FROM homes WHERE id IN (?, ?) ORDER BY id FOR UPDATE", [aId, bId]);
+    const A = locked.find((h) => h.id === aId), B = locked.find((h) => h.id === bId);
+    if (!A || !B) throw new ApiError(404, "not_found", "Home not found.");
+
+    const aPersonas = await all(c, "SELECT * FROM personas WHERE home_id = ? FOR UPDATE", [aId]);
+    const bPersonas = await all(c, "SELECT * FROM personas WHERE home_id = ? ORDER BY created_at FOR UPDATE", [bId]);
+    const byName = new Map(aPersonas.map((p) => [p.name as string, p]));
+    const taken = new Set(aPersonas.map((p) => p.name as string));
+    const outcomes: MergeOutcome[] = [];
+    let added = 0;
+    for (const p of bPersonas) {
+      const clash = byName.get(p.name);
+      if (clash && onConflict === "merge" && clash.kind === p.kind) {
+        await run(c, "UPDATE sessions SET persona_id = ? WHERE persona_id = ?", [clash.id, p.id]);
+        await run(c, "UPDATE says SET persona_id = ? WHERE persona_id = ?", [clash.id, p.id]);
+        if (!clash.sprite && p.sprite) {
+          await run(c, "UPDATE personas SET appearance = ?, sprite = ?, sprite_status = ?, sprite_error = ? WHERE id = ?",
+            [p.appearance, p.sprite, p.sprite_status, p.sprite_error, clash.id]);
+        }
+        await run(c, "DELETE FROM personas WHERE id = ?", [p.id]);
+        outcomes.push({ id: clash.id, from_name: p.name, name: clash.name, action: "merged" });
+        continue;
+      }
+      const name = clash ? freeName(p.name, B.name, taken) : p.name;
+      taken.add(name);
+      added++;
+      await run(c, "UPDATE personas SET home_id = ?, name = ? WHERE id = ?", [aId, name, p.id]);
+      outcomes.push({ id: p.id, from_name: p.name, name, action: clash ? "renamed" : "moved" });
+    }
+    if (aPersonas.length + added > LIMITS.personasPerHome) {
+      throw new ApiError(409, "too_many_personas", `The merged home would have more than ${LIMITS.personasPerHome} personas; retire some first.`);
+    }
+
+    // Sessions: titles were encrypted under B's key, which A's owner cannot read — drop them.
+    const clashes = await all(c, `
+      SELECT b.id, b.ext_key FROM sessions b JOIN sessions a ON a.home_id = ? AND a.ext_key = b.ext_key
+      WHERE b.home_id = ?`, [aId, bId]);
+    for (const s of clashes) await run(c, "UPDATE sessions SET ext_key = ? WHERE id = ?", [`m-${s.id}`, s.id]);
+    await run(c, "UPDATE sessions SET home_id = ?, task_enc = NULL WHERE home_id = ?", [aId, bId]);
+    await run(c, "UPDATE says SET home_id = ? WHERE home_id = ?", [aId, bId]);
+    await run(c, "UPDATE events SET home_id = ? WHERE home_id = ?", [aId, bId]);
+    for (const q of mergeStatsSql) await run(c, q, [aId, bId]);
+    for (const t of ["daily_stats", "tool_stats", "avatar_usage"]) await run(c, `DELETE FROM ${t} WHERE home_id = ?`, [bId]);
+
+    // B's devices and B's owner key become devices of A that must pick up A's enc_key (rekey_blob).
+    await run(c, "UPDATE devices SET home_id = ?, needs_rekey = 1, rekey_blob = ? WHERE home_id = ?", [aId, rekeyBlob, bId]);
+    const ownerDevice = newId("d");
+    await run(c, `INSERT INTO devices (id, home_id, auth_hash, label, created_at, last_seen_at, needs_rekey, rekey_blob)
+      VALUES (?, ?, ?, ?, ?, ?, 1, ?)`, [ownerDevice, aId, B.auth_hash, cleanLabel(`${B.name} (merged)`), now, now, rekeyBlob]);
+    await run(c, "DELETE FROM invites WHERE home_id = ?", [bId]);
+    await run(c, "DELETE FROM homes WHERE id = ?", [bId]);
+    await run(c, devSql.useInvite, [now, inviteId]);
+    await run(c, saysSql.prune, [aId, aId]);
+
+    const personas = (await all(c, "SELECT * FROM personas WHERE id IN (?)", [outcomes.length ? outcomes.map((o) => o.id) : [""]]))
+      .map(publicPersona);
+    return { A, B, outcomes, personas, ownerDevice };
+  });
+  clearTimeout(countsPending.get(bId));
+  countsPending.delete(bId);
+  bus.emit({ type: "home_removed", home_id: bId, data: { merged_into: result.A.id } });
+  const home = publicHome((await one(db(), sql.homeById, [result.A.id]))!);
+  bus.emit({ type: "home", home_id: home.id, data: home });
+  for (const p of result.personas) bus.emit({ type: "persona", home_id: home.id, data: p });
+  scheduleCounts(home.id);
+  return { home, merged_from: result.B.id, personas: result.outcomes, device_id: result.ownerDevice };
+}
+
+const cleanLabel = (s: string) => [...s].slice(0, 40).join("");
+
+export async function clearRekey(deviceId: string) {
+  await run(db(), "UPDATE devices SET needs_rekey = 0, rekey_blob = NULL WHERE id = ?", [deviceId]);
+}
+
+/** A merge invite's public bits + blob (useless without the secret in the code). Join invites are not peekable. */
+export async function peekInvite(id: string) {
+  const inv = await one(db(), "SELECT * FROM invites WHERE id = ?", [id]);
+  if (!inv || inv.kind !== "merge") throw new ApiError(404, "invite_not_found", "No such merge invite.");
+  if (inv.used_at !== null) throw new ApiError(410, "invite_used", "This invite was already used. Ask for a new one.");
+  if (inv.expires_at <= Date.now()) throw new ApiError(410, "invite_expired", "This invite expired. Ask for a new one.");
+  const home = (await one(db(), sql.homeById, [inv.home_id]))!;
+  return { id: inv.id, kind: inv.kind, home: { id: home.id, name: home.name }, blob: inv.blob_enc, expires_at: inv.expires_at };
 }

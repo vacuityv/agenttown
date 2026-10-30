@@ -157,6 +157,79 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
       ) ${T}`,
     ],
   },
+  {
+    // Free town: home customization, public says, the cemetery; invites + device credentials.
+    version: 2,
+    statements: [
+      `ALTER TABLE homes
+        ADD COLUMN dwelling    VARCHAR(24)  NULL,  -- house | cottage | ... ; NULL = client picks from hash(id)
+        ADD COLUMN style       VARCHAR(24)  NULL,  -- pixel | flat | ... ; NULL = client picks from hash(id)
+        ADD COLUMN description VARCHAR(255) NULL  -- public, <= 200 chars
+      `,
+      `CREATE TABLE IF NOT EXISTS says (
+        id         BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        home_id    VARCHAR(32)  NOT NULL,
+        persona_id VARCHAR(32)  NOT NULL,
+        text       VARCHAR(512) NOT NULL,          -- public, <= 140 chars
+        ts         BIGINT       NOT NULL,
+        KEY says_home (home_id, id),
+        CONSTRAINT says_home FOREIGN KEY (home_id) REFERENCES homes(id) ON DELETE CASCADE,
+        CONSTRAINT says_persona FOREIGN KEY (persona_id) REFERENCES personas(id) ON DELETE CASCADE
+      ) ${T}`,
+      // Graves outlive their home: no foreign keys.
+      `CREATE TABLE IF NOT EXISTS tombstones (
+        id         VARCHAR(32)  NOT NULL PRIMARY KEY,
+        home_id    VARCHAR(32)  NOT NULL,
+        persona_id VARCHAR(32)  NULL,              -- NULL: the grave of an empty home
+        name       VARCHAR(64)  NOT NULL,
+        kind       VARCHAR(32)  NOT NULL,
+        home_name  VARCHAR(64)  NOT NULL,
+        appearance VARCHAR(255) NULL,
+        sprite     MEDIUMTEXT   NULL,
+        born_at    BIGINT       NOT NULL,
+        died_at    BIGINT       NOT NULL,
+        epitaph    VARCHAR(512) NULL,
+        KEY tombstones_died (died_at)
+      ) ${T}`,
+      `CREATE TABLE IF NOT EXISTS invites (
+        id         VARCHAR(32)  NOT NULL PRIMARY KEY,
+        home_id    VARCHAR(32)  NOT NULL,
+        blob_enc   VARCHAR(1024) NOT NULL,         -- home enc_key wrapped under a key only the code holder has
+        kind       VARCHAR(8)   NOT NULL DEFAULT 'join',  -- join (new device) | merge (another home moves in)
+        label      VARCHAR(64)  NULL,
+        created_at BIGINT       NOT NULL,
+        expires_at BIGINT       NOT NULL,
+        used_at    BIGINT       NULL,
+        KEY invites_home (home_id),
+        CONSTRAINT invites_home FOREIGN KEY (home_id) REFERENCES homes(id) ON DELETE CASCADE
+      ) ${T}`,
+      `CREATE TABLE IF NOT EXISTS devices (
+        id           VARCHAR(32) NOT NULL PRIMARY KEY,
+        home_id      VARCHAR(32) NOT NULL,
+        auth_hash    CHAR(64)    NOT NULL,         -- sha256(device_token)
+        label        VARCHAR(64) NULL,
+        created_at   BIGINT      NOT NULL,
+        last_seen_at BIGINT      NULL,
+        revoked_at   BIGINT      NULL,
+        needs_rekey  TINYINT     NOT NULL DEFAULT 0,  -- 1: its home was merged away; fetch rekey_blob via /me
+        rekey_blob   VARCHAR(1024) NULL,           -- new home's enc_key, wrapped under the old home's enc_key
+        UNIQUE KEY devices_auth (auth_hash),
+        KEY devices_home (home_id),
+        CONSTRAINT devices_home FOREIGN KEY (home_id) REFERENCES homes(id) ON DELETE CASCADE
+      ) ${T}`,
+    ],
+  },
+  {
+    // Permanent map slots: assigned once (AUTO_INCREMENT, persisted by InnoDB), never reused after a delete/merge.
+    // Existing homes get slots in created_at order.
+    version: 3,
+    statements: [
+      `ALTER TABLE homes ADD COLUMN slot BIGINT UNSIGNED NULL`,
+      `UPDATE homes h JOIN (SELECT id, ROW_NUMBER() OVER (ORDER BY created_at, id) AS rn FROM homes) x ON x.id = h.id
+        SET h.slot = x.rn`,
+      `ALTER TABLE homes MODIFY slot BIGINT UNSIGNED NOT NULL AUTO_INCREMENT, ADD UNIQUE KEY homes_slot (slot)`,
+    ],
+  },
 ];
 
 export async function initDb() {

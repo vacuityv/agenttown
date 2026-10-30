@@ -21,3 +21,6 @@ export const LIMITS = {
   busyTimeoutMs: 30 * 60_000,
   retentionMs: 14 * 24 * 3600_000,
 };
+
+// Device invites: single use, short-lived (overridable for tests).
+export const INVITE_TTL_MS = Number(process.env.INVITE_TTL_MS ?? 15 * 60_000);
