@@ -6,6 +6,7 @@
 // Default characters are little office workers sitting behind a laptop: the scene draws the desk over
 // sprite rows >= 24, the laptop lid covers x 11..20 / rows 17..24, hands rest on the desk at row 23.
 import { hash32, rng, offscreen } from "./util.js";
+import { lookFor, drawV2Icon } from "./creatures.js";
 
 const S = 32;
 
@@ -267,6 +268,17 @@ export function frameFor(sheet, status, t, seed = 0) {
 
 // Little canvas element showing a persona's idle frame (for lists).
 export function spriteIcon(persona, scale = 2) {
+  const look = lookFor(persona);
+  if (look) {
+    const dpr = window.devicePixelRatio || 1;
+    const css = 32 * scale;
+    const c = document.createElement("canvas");
+    c.width = Math.round(css * dpr); c.height = Math.round(css * dpr);
+    c.style.width = css + "px"; c.style.height = css + "px";
+    c.className = "sprite-icon";
+    drawV2Icon(c, look);
+    return c;
+  }
   const sheet = sheetFor(persona);
   const c = document.createElement("canvas");
   const dpr = window.devicePixelRatio || 1;

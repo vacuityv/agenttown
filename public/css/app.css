@@ -229,3 +229,6 @@ dialog input {
 }
 
 .legend { margin: 8px 0 0; font-family: var(--mono); line-height: 1.5; }
+.home-descr { margin: 2px 0 6px; font-size: 14px; color: var(--text); opacity: 0.85; overflow-wrap: anywhere; font-style: italic; }
+.timeline li.say .what { color: var(--text); white-space: normal; }
+.tip .sprite-icon { align-self: flex-start; margin-bottom: 4px; }

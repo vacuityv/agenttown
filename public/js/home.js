@@ -1,7 +1,7 @@
 // "/h/:id" — one Home, up close. Same top-down interior as the town (shared HomeSim renderer), drawn
 // bigger, with speech bubbles (task titles decrypted locally for the owner), side panel and stats.
 import { api, openStream } from "./api.js";
-import { HomeSim, HOUSE_W, HOUSE_H, WALL, statusLine, SPOT_LABEL } from "./interior.js";
+import { HomeSim, statusLine, SPOT_LABEL, setDwelling, onDwellingChange } from "./interior.js";
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
@@ -23,6 +23,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
   const title = el("h1", { class: "home-name", text: "…" });
   const summary = el("p", { class: "home-summary muted" });
+  const descr = el("p", { class: "home-descr", hidden: true });
   const badge = el("p", { class: "owner-badge", hidden: true });
   const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": "Home interior, seen from above" });
   const tip = el("div", { class: "tip", hidden: true });
@@ -37,7 +38,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     el("section", { class: "room-col" },
       el("div", { class: "room-head" },
         el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, "← Town"),
-        title, summary, badge),
+        title, descr, summary, badge),
       roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
       el("section", { class: "card" }, el("h2", { text: "Residents · 住户" }), personaList),
@@ -78,12 +79,15 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     try {
       const r = await api(`/homes/${encodeURIComponent(id)}`);
       home = r.home;
+      if (home.dwelling !== undefined) setDwelling(id, home.dwelling);
       const first = !sessions.size && !sim.ents.size;
       sim.setPersonas(r.personas);
       const open = new Set(r.sessions.map((s) => s.id));
       for (const sid of [...sessions.keys()]) if (!open.has(sid)) applySession({ ...sessions.get(sid), status: "ended" }, true);
       if (first) { sim.setAgents(r.sessions); for (const s of r.sessions) { sessions.set(s.id, s); seenSessions.set(s.id, s.persona_id); } }
       else for (const s of r.sessions) applySession(s, true);
+      for (const m of r.says ?? []) sim.say(m.persona_id, m.text, m.ts);
+      saysLoaded = r.says ?? [];
       renderHead();
       schedulePanel();
     } catch (e) {
@@ -95,10 +99,13 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   let reloadTimer = 0;
   function scheduleReload() { clearTimeout(reloadTimer); reloadTimer = setTimeout(load, 800); }
 
+  let saysLoaded = [];
   async function loadEvents() {
     try {
       const r = await api(`/homes/${encodeURIComponent(id)}/events?limit=40`);
-      timeline.replaceChildren(...r.events.map(eventItem));
+      const items = [...r.events.map((ev) => ({ ts: ev.ts, node: eventItem(ev) })), ...saysLoaded.map((m) => ({ ts: m.ts, node: sayItem(m) }))];
+      items.sort((a, b) => b.ts - a.ts);
+      timeline.replaceChildren(...items.map((i) => i.node));
       if (!r.events.length) timeline.append(el("li", { class: "muted small", text: "No activity yet." }));
     } catch {}
   }
@@ -116,7 +123,13 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   }
 
   const closeStream = openStream(`home=${encodeURIComponent(id)}`, {
-    home: (h) => { if (h.id === id) { home = { ...home, ...h }; renderHead(); } },
+    home: (h) => { if (h.id === id) { home = { ...home, ...h }; if (h.dwelling !== undefined) setDwelling(id, h.dwelling); renderHead(); } },
+    say: (m) => {
+      sim.say(m.persona_id, m.text, m.ts);
+      timeline.querySelector(".muted.small")?.remove();
+      timeline.prepend(sayItem(m));
+      while (timeline.children.length > 60) timeline.lastChild.remove();
+    },
     persona: (p) => upsertPersona(p),
     session: (s) => {
       applySession(s, true);
@@ -128,11 +141,14 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   });
   const statsTimer = setInterval(loadStats, 60_000);
   const offOwner = onOwnerChange(() => { renderHead(); schedulePanel(); });
+  const offDwelling = onDwellingChange((hid) => { if (hid === id) sim.relayout(); });
   // ---------- header / side panel ----------
 
   function renderHead() {
     if (!home) return;
     title.textContent = home.name;
+    descr.hidden = !home.description;
+    descr.textContent = home.description ?? "";
     document.title = `${home.name} · Agent Town`;
     let open = 0, busy = 0, subs = 0;
     for (const s of sessions.values()) { open++; if (BUSY.has(s.status)) busy++; if (s.parent_id) subs++; }
@@ -187,6 +203,13 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       el("span", { class: "what", text: statusText(s) }),
       ev.task_no ? el("span", { class: "task muted", text: `#${ev.task_no}` }) : null);
   }
+  function sayItem(m) {
+    return el("li", { class: "say" },
+      el("time", { text: hhmm(m.ts ?? Date.now()), datetime: new Date(m.ts ?? Date.now()).toISOString() }),
+      el("span", { class: "dot", style: "background:#ffffff" }),
+      el("span", { class: "who", text: truncate(personas.get(m.persona_id)?.name ?? "someone", 18) }),
+      el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }));
+  }
   let lastEv = "";
   function prependEvent(ev) {
     const key = `${ev.session_id}|${ev.status}|${ev.tool}|${ev.task_no}`;
@@ -237,13 +260,14 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   function layout() {
     dpr = window.devicePixelRatio || 1;
     const avail = Math.max(200, roomWrap.clientWidth);
-    const totalW = HOUSE_W + MARGIN * 2, totalH = HOUSE_H + MARGIN * 2;
+    const ext = sim.plan.ext;
+    const totalW = ext.x1 - ext.x0 + MARGIN * 2, totalH = ext.y1 - ext.y0 + MARGIN * 2;
     // even device scale keeps the half-size sprites on whole pixels
     S = Math.max(2, Math.floor((avail * dpr) / totalW / 2) * 2);
     S = Math.min(S, Math.round(8 * dpr));
     fitCanvas(canvas, (totalW * S) / dpr, (totalH * S) / dpr);
     W = canvas.width; H = canvas.height;
-    X0 = (MARGIN + WALL) * S; Y0 = (MARGIN + WALL) * S;
+    X0 = (MARGIN - ext.x0) * S; Y0 = (MARGIN - ext.y0) * S;
   }
 
   const FONT = (px, w = 600) => `${w} ${Math.round(px * dpr)}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
@@ -265,7 +289,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     if (st.awake === 0) { ctx.fillStyle = "rgba(8, 10, 30, 0.42)"; ctx.fillRect(0, 0, W, H); }
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     for (const a of anchors) {
-      if (a.ent.sleeper || a.ent.pose === "sleep") drawZzz(a, t);
+      if (a.ent.say && a.ent.say.until > performance.now()) drawSay(a);
+      else if (a.ent.sleeper || a.ent.pose === "sleep") drawZzz(a, t);
       else drawSpeech(a, t);
     }
   }
@@ -296,9 +321,30 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     return chars.join("") + "…";
   }
 
+  function drawSay(a) {
+    const text = a.ent.say.text;
+    ctx.font = FONT(10, 500);
+    const maxW = 170 * dpr, pad = 5 * dpr, lh = 12 * dpr;
+    // wrap into up to 3 lines
+    const words = [...text];
+    const lines = [];
+    let cur = "";
+    for (const ch of words) { if (ctx.measureText(cur + ch).width > maxW - pad * 2) { lines.push(cur); cur = ""; if (lines.length === 3) break; } cur += ch; }
+    if (lines.length < 3 && cur) lines.push(cur); else if (cur && lines.length === 3) lines[2] = lines[2].slice(0, -1) + "…";
+    const w = Math.ceil(Math.max(...lines.map((l) => ctx.measureText(l).width)) + pad * 2), h = Math.ceil(lines.length * lh + pad);
+    const x = Math.round(clamp(a.x - w / 2, 2, W - w - 2)), y = Math.round(Math.max(2, a.y - h - 6 * dpr));
+    ctx.fillStyle = "rgba(20, 15, 28, 0.35)"; ctx.fillRect(x + dpr, y + 2 * dpr, w, h);
+    ctx.fillStyle = "#ffffff"; ctx.fillRect(x, y, w, h);
+    ctx.beginPath(); ctx.moveTo(a.x - 3 * dpr, y + h); ctx.lineTo(a.x + 3 * dpr, y + h); ctx.lineTo(a.x, y + h + 5 * dpr); ctx.closePath(); ctx.fill();
+    ctx.textAlign = "left"; ctx.textBaseline = "top"; ctx.fillStyle = "#241a2b";
+    lines.forEach((l, i) => ctx.fillText(l, x + pad, y + pad * 0.6 + i * lh));
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  }
+
   function drawSpeech(a, t) {
     const e = a.ent;
     const s = e.a;
+    if (e.say && e.say.until > performance.now()) return drawSay(a);
     if (s.status === "idle" && !e.ending) return; // resting quietly on the sofa
     const mini = e.mini;
     const line1 = mini ? (s.status === "tool" ? s.tool || "tool" : s.status === "thinking" ? "…" : statusLine(e)) : statusLine(e);
@@ -377,6 +423,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     clearTimeout(reloadTimer);
     clearTimeout(panelTimer);
     offOwner();
+    offDwelling();
   }
 
   load().then(() => { if (!dead) { loadEvents(); loadStats(); } });
