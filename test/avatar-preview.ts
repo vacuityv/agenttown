@@ -5,7 +5,6 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 
-process.env.DB_PATH ??= ":memory:"; // avatar.ts imports the db module; keep the real db untouched
 const { generateSprite, AVATAR_MODEL, hasApiKey } = await import("../server/avatar.ts");
 
 const descs = process.argv.slice(2).filter(Boolean);

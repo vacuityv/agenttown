@@ -1,4 +1,4 @@
-// Hook adapters end-to-end: boots the server on a throwaway DB, registers via the CLI, then pipes a realistic
+// Hook adapters end-to-end: boots the server on a freshly emptied test DB (TEST_MYSQL_URL), registers via the CLI, then pipes a realistic
 // Claude Code session and Codex payloads through `agenttown hook <adapter>` (real detached-flush path) and the
 // MCP server, asserting the public home state.
 import { spawn, spawnSync } from "node:child_process";
@@ -7,17 +7,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDecipheriv, createHmac } from "node:crypto";
 import assert from "node:assert/strict";
+import { resetTestDb } from "./test-db.ts";
 
 const PORT = 8796;
 const BASE = `http://localhost:${PORT}`;
 const CLI = "public/cli/agenttown.mjs";
 const dir = mkdtempSync(join(tmpdir(), "agenttown-hooks-"));
-const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), DB_PATH: join(dir, "t.db"), POW_DIFFICULTY: "8", PUBLIC_URL: BASE, ANTHROPIC_API_KEY: "" };
+const env: NodeJS.ProcessEnv = { ...process.env, PORT: String(PORT), MYSQL_URL: await resetTestDb(), POW_DIFFICULTY: "8", PUBLIC_URL: BASE, ANTHROPIC_API_KEY: "" };
 delete env.AGENTTOWN_HOOK_SYNC;
 delete env.AGENTTOWN_DISABLED;
 
 const server = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server/index.ts"], { env, stdio: ["ignore", "pipe", "inherit"] });
-await new Promise<void>((ok) => server.stdout!.on("data", (d) => String(d).includes("listening") && ok()));
+await new Promise<void>((ok, fail) => {
+  server.stdout!.on("data", (d) => String(d).includes("listening") && ok());
+  server.on("exit", (code) => fail(new Error(`server exited (${code})`)));
+});
 
 const cfgDir = join(dir, "home");
 const cfgPath = join(cfgDir, "config.json");

@@ -9,6 +9,7 @@ import { PORT, POW_DIFFICULTY, PUBLIC_URL, TRUST_PROXY } from "./config.ts";
 import { bus, type BusEvent } from "./bus.ts";
 import * as store from "./store.ts";
 import { startAvatarWorker } from "./avatar.ts";
+import { initDb } from "./db.ts";
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
 } from "./util.ts";
@@ -40,7 +41,7 @@ async function body(c: Context): Promise<Record<string, any>> {
 const requireAuth = async (c: Context<Env>, next: () => Promise<void>) => {
   const token = c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   if (!AUTH_TOKEN_RE.test(token)) throw new ApiError(401, "unauthorized", "Missing or malformed bearer token.");
-  const home = store.homeByAuth(sha256hex(token));
+  const home = await store.homeByAuth(sha256hex(token));
   if (!home) throw new ApiError(401, "unauthorized", "Unknown token.");
   c.set("home", { id: home.id, name: home.name });
   await next();
@@ -67,7 +68,7 @@ api.post("/register", async (c) => {
   if (typeof b.challenge !== "string" || typeof b.nonce !== "string" || !verifyPow(b.challenge, b.nonce, POW_DIFFICULTY)) {
     throw new ApiError(400, "bad_pow", "Invalid, expired or reused proof-of-work.");
   }
-  const home = store.createHome(sha256hex(b.auth_token), name);
+  const home = await store.createHome(sha256hex(b.auth_token), name);
   return c.json({ home, home_url: `${PUBLIC_URL}/h/${home.id}` }, 201);
 });
 
@@ -81,7 +82,7 @@ api.get("/me", requireAuth, (c) => {
 api.patch("/home", requireAuth, async (c) => {
   const name = cleanText((await body(c)).name, 40);
   if (!name) throw new ApiError(400, "bad_home_name", "name is required (1-40 chars).");
-  return c.json({ home: store.renameHome(c.get("home").id, name) });
+  return c.json({ home: await store.renameHome(c.get("home").id, name) });
 });
 
 function personaFields(p: any) {
@@ -97,7 +98,7 @@ api.post("/personas", requireAuth, async (c) => {
   const b = await body(c);
   const { name, kind } = personaFields(b);
   const appearance = b.appearance === undefined ? null : cleanText(b.appearance, 200);
-  return c.json({ persona: store.upsertPersona(home.id, name, kind, appearance) });
+  return c.json({ persona: await store.upsertPersona(home.id, name, kind, appearance) });
 });
 
 api.post("/report", requireAuth, async (c) => {
@@ -119,48 +120,48 @@ api.post("/report", requireAuth, async (c) => {
     }
     task = { title_enc: enc };
   }
-  const r = store.report(home.id, { persona, session, parent, status: b.status, tool: cleanTool(b.tool), task });
+  const r = await store.report(home.id, { persona, session, parent, status: b.status, tool: cleanTool(b.tool), task });
   return c.json(r);
 });
 
 // ---- public ----
 
-api.get("/world", (c) => {
+api.get("/world", async (c) => {
   const lim = Math.min(Number(c.req.query("limit")) || 500, 2000);
   const off = Math.max(Number(c.req.query("offset")) || 0, 0);
-  return c.json(store.world(lim, off));
+  return c.json(await store.world(lim, off));
 });
 
-const publicHome = (c: Context) => {
-  const h = store.homeById(c.req.param("id") ?? "");
+const publicHome = async (c: Context) => {
+  const h = await store.homeById(c.req.param("id") ?? "");
   if (!h) throw new ApiError(404, "not_found", "No such home.");
   return h;
 };
 
-api.get("/town", (c) => {
+api.get("/town", async (c) => {
   limit(`town:${clientIp(c)}`, 10, 60);
   const ids = (c.req.query("ids") ?? "").split(",").filter((s) => /^h_[0-9a-z]{4,16}$/.test(s)).slice(0, 100);
-  return c.json({ homes: store.town(ids) });
+  return c.json({ homes: await store.town(ids) });
 });
 
-api.get("/homes/:id", (c) => {
-  const h = publicHome(c);
+api.get("/homes/:id", async (c) => {
+  const h = await publicHome(c);
   return c.json({
     home: store.publicHome(h),
-    personas: store.personasOfHome(h.id),
-    sessions: store.openSessionsOfHome(h.id),
+    personas: await store.personasOfHome(h.id),
+    sessions: await store.openSessionsOfHome(h.id),
   });
 });
 
-api.get("/homes/:id/stats", (c) => {
+api.get("/homes/:id/stats", async (c) => {
   const days = Math.min(Math.max(Number(c.req.query("days")) || 14, 1), 90);
-  return c.json(store.stats(publicHome(c).id, days));
+  return c.json(await store.stats((await publicHome(c)).id, days));
 });
 
-api.get("/homes/:id/events", (c) => {
+api.get("/homes/:id/events", async (c) => {
   const before = Number(c.req.query("before")) || Date.now() + 1;
   const lim = Math.min(Number(c.req.query("limit")) || 100, 500);
-  return c.json({ events: store.events(publicHome(c).id, before, lim) });
+  return c.json({ events: await store.events((await publicHome(c)).id, before, lim) });
 });
 
 // Live updates. ?home=<id>: everything about one home. Without it: the town feed (home, counts, agent, persona).
@@ -210,8 +211,15 @@ app.get("/h/:id", serveStatic({ path: "./public/index.html" }));
 app.use("/*", serveStatic({ root: "./public" }));
 
 setInterval(() => {
-  try { store.sweep(); } catch (e) { console.error("sweep failed", e); }
+  store.sweep().catch((e) => console.error("sweep failed", e));
 }, 60_000).unref();
+
+try {
+  await initDb();
+} catch (e) {
+  console.error(`agenttown: database init failed: ${(e as Error).message}`);
+  process.exit(1);
+}
 
 startAvatarWorker();
 
