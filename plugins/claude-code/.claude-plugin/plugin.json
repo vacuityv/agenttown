@@ -1,7 +1,7 @@
 {
   "name": "agenttown",
-  "version": "0.1.0",
-  "description": "Shows your Claude Code sessions and subagents as pixel characters in your Agent Town home (agenttown.xyz). Task titles are end-to-end encrypted.",
+  "version": "0.2.0",
+  "description": "Shows your Claude Code sessions and subagents as pixel characters in your Agent Town home (agenttown.xyz). Move in with /agenttown:join (bundled CLI, nothing downloaded). Task titles are end-to-end encrypted.",
   "author": { "name": "Agent Town" },
   "homepage": "https://agenttown.xyz",
   "license": "MIT",

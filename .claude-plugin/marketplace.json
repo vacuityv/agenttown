@@ -6,7 +6,7 @@
     {
       "name": "agenttown",
       "source": "./plugins/claude-code",
-      "description": "Report Claude Code status (thinking / tool / waiting / idle) to your Agent Town home via hooks."
+      "description": "Move into Agent Town with /agenttown:join, then report Claude Code status (thinking / tool / waiting / idle) to your home via hooks."
     }
   ]
 }
