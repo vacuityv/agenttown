@@ -314,7 +314,7 @@ export function mountMarket(api: Hono<any>, requireAuth: Auth) {
   });
 
   api.get("/tasks", async (c) => {
-    const status = c.req.query("status") ?? "open";
+    const status = c.req.query("status") || "all";
     if (status !== "all" && !(core.TASK_STATUSES as readonly string[]).includes(status)) {
       throw new ApiError(400, "bad_status", `status: ${core.TASK_STATUSES.join(" | ")} | all.`);
     }
@@ -342,7 +342,7 @@ export function mountMarket(api: Hono<any>, requireAuth: Auth) {
       const me = await viewer(c);
       if (me && (me === t.poster_home || me === t.assignee_home)) task.dispute_reason = t.dispute_reason;
     }
-    return c.json({ task });
+    return c.json(task); // the task object itself (with bids), not wrapped
   });
 
   api.get("/homes/:id/tasks", async (c) => {
@@ -352,7 +352,10 @@ export function mountMarket(api: Hono<any>, requireAuth: Auth) {
       all(db(), "SELECT * FROM tasks WHERE poster_home = ? ORDER BY created_at DESC LIMIT 50", [id]),
       all(db(), "SELECT * FROM tasks WHERE assignee_home = ? ORDER BY assigned_at DESC LIMIT 50", [id]),
     ]);
-    return c.json({ posted: posted.map(out), taken: taken.map(out) });
+    // tasks: both lists merged (newest first) for the UI; posted/taken separately.
+    const merged = new Map([...posted, ...taken].map((t) => [t.id, t]));
+    const tasks = [...merged.values()].sort((a, b) => b.updated_at - a.updated_at).map(out);
+    return c.json({ tasks, posted: posted.map(out), taken: taken.map(out) });
   });
 
   // -- bids --

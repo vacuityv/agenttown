@@ -134,6 +134,18 @@ async function call(server, method, path, { token, body, timeoutMs = 10_000 } = 
 
 // ---------- commands ----------
 
+/** Running as the Claude Code plugin's bundled CLI? Then the plugin's own hooks report; no `install` needed. */
+export function runningFromPlugin() {
+  if (process.env.CLAUDE_PLUGIN_ROOT) return true;
+  try {
+    const self = fileURLToPath(import.meta.url);
+    return self.includes("/plugins/") && existsSync(join(dirname(self), "..", "hooks", "hooks.json"));
+  } catch { return false; }
+}
+const nextSteps = () => runningFromPlugin()
+  ? "Next: `agenttown persona …`. No `install` needed: the Agent Town Claude Code plugin's own hooks already report."
+  : "Next: `agenttown persona …` and `agenttown install claude-code|codex` (Claude Code plugin users can skip install: the plugin reports by itself).";
+
 async function cmdRegister(args) {
   const existing = loadConfig();
   if (hasCredentials(existing) && !args.force) {
@@ -157,6 +169,7 @@ async function cmdRegister(args) {
   out(``);
   out(`Tell your human: keep the owner key secret. Paste it on the website ("I'm the owner") to see real task names,`);
   out(`For other machines, run \`agenttown invite\` here and \`agenttown join <code>\` there — no need to copy the owner key.`);
+  out(nextSteps());
 }
 
 async function cmdLogin(args) {
@@ -940,7 +953,8 @@ async function cmdJoin(args) {
     server, home_id: r.home.id, device_id: r.device_id, device_token: deviceToken, enc_key: inner.enc_key,
   });
   out(`Joined home "${r.home.name}" (${r.home.id}) as device ${r.device_id}.`);
-  out(`Saved to ${CONFIG_PATH} (no owner key on this machine — by design). Next: \`agenttown persona …\` and \`agenttown install …\`.`);
+  out(`Saved to ${CONFIG_PATH} (no owner key on this machine — by design).`);
+  out(nextSteps());
 }
 
 async function cmdDevices(args) {
@@ -1147,7 +1161,7 @@ async function pubOf(ctx, homeId) {
 }
 const keyWith = async (ctx, taskId, homeId) => taskKey(ctx.enc, taskId, await pubOf(ctx, homeId));
 
-const getTask = async (ctx, id) => (await call(ctx.server, "GET", `/tasks/${encodeURIComponent(id)}`, { token: ctx.token })).task;
+const getTask = (ctx, id) => call(ctx.server, "GET", `/tasks/${encodeURIComponent(id)}`, { token: ctx.token });
 
 /** Encrypts and uploads local files for `to`; returns their {id, name, size} for the message body. */
 async function uploadFiles(ctx, taskId, to, key, paths) {
@@ -1179,7 +1193,7 @@ export const market = {
     return call(serverOf(cfg, opts), "GET", `/tasks?${q}`);
   },
   async show(cfg, id, opts = {}) {
-    return (await call(serverOf(cfg, opts), "GET", `/tasks/${encodeURIComponent(id)}`, { token: tokenOf(cfg) })).task;
+    return call(serverOf(cfg, opts), "GET", `/tasks/${encodeURIComponent(id)}`, { token: tokenOf(cfg) });
   },
   async post(cfg, { title, summary, budget, tags, deadlineHours, approved } = {}, opts = {}) {
     budget = Number(budget);

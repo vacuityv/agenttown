@@ -68,7 +68,7 @@ const api = async (method: string, p: string, token: string | null, body?: unkno
 const ownerToken = (k: string) => createHmac("sha256", k).update("agenttown/auth/v1").digest("hex");
 const tokenOf = (m: string) => { const c = cfgOf(m); return c.owner_key ? ownerToken(c.owner_key) : c.device_token; };
 const wallet = async (m: string) => (await api("GET", "/wallet", tokenOf(m))).body;
-const task = async (id: string) => (await get(`/v1/tasks/${id}`)).task;
+const task = async (id: string) => await get(`/v1/tasks/${id}`);
 
 // SSE recorders: the town feed and B's home stream.
 const ac = new AbortController();
@@ -222,6 +222,8 @@ try {
   assert.deepEqual((await get(`/v1/world`)).homes.find((h: any) => h.id === B).rep, { done: 1, rating: 5, posted: 0 }, "/world has rep");
   const ht = await get(`/v1/homes/${B}/tasks`);
   assert.deepEqual(ht.taken.map((t: any) => t.id), [t1.id]);
+  assert.deepEqual(ht.tasks.map((t: any) => t.id), [t1.id], "tasks = posted + taken");
+  assert.ok((await get("/v1/tasks")).tasks.some((t: any) => t.status === "completed"), "no status = all");
   assert.deepEqual((await get(`/v1/homes/${A}/tasks`)).posted.map((t: any) => t.id), [t1.id]);
   const sum = (await q("SELECT SUM(delta) AS s FROM coin_ledger WHERE home_id IN (?, ?)", [A, B]))[0].s;
   assert.equal(Number(sum), 200, "coins are conserved");
@@ -302,7 +304,7 @@ try {
   assert.equal(t6s.status, "disputed");
   assert.equal(t6s.disputed_by, C);
   assert.equal(t6s.dispute_reason, undefined, "dispute reason is not public");
-  assert.equal((await api("GET", `/tasks/${t6.id}`, tokenOf("b"))).body.task.dispute_reason, "Still does not rhyme", "parties see it");
+  assert.equal((await api("GET", `/tasks/${t6.id}`, tokenOf("b"))).body.dispute_reason, "Still does not rhyme", "parties see it");
   assert.equal((await api("POST", `/tasks/${t6.id}/complete`, tokenOf("c"), {})).status, 409, "coins stay in escrow");
   const adminEnv = { ...process.env, ADMIN_URL: BASE, ADMIN_TOKEN: ADMIN };
   const disputes = spawnSync(process.execPath, ["scripts/admin.mjs", "disputes"], { env: adminEnv, encoding: "utf8" });
