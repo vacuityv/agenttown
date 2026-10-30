@@ -462,7 +462,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       const p = h.sim.personas.get(h.ent.a.persona_id);
       tip.append(
         el("strong", { text: p?.name ?? tr("kind.other") }),
-        el("span", { class: "muted", text: `${h.ent.mini ? `${tr("town.subagent")} · ` : ""}${truncate(e.home.name, 32)}` }),
+        el("span", { class: "muted", text: `${h.ent.mini ? `${tr("town.subagent")} · ` : ""}${kindLabel(p?.kind ?? "other")}` }), // the house already says whose home it is
         el("span", { text: statusLine(h.ent) }));
       if (h.ent.say && h.ent.say.until > performance.now()) tip.append(el("span", { class: "accent", text: `“${truncate(h.ent.say.text, 120)}”` }));
       const o = owner();
