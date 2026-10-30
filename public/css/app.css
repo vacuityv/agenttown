@@ -382,3 +382,41 @@ dialog input {
 .persona-list .session-rows .dot { width: 7px; height: 7px; flex: none; }
 .persona-list .session-rows .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .persona-list li.sub { padding-left: 18px; }
+
+/* ---------- cemetery ---------- */
+.cem-page { width: 100%; max-width: 1200px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.cem-page .back { font: 13px var(--mono); text-decoration: none; }
+.cem-head h1 { margin: 4px 0; font: 700 26px var(--mono); }
+.cem-head p { margin: 2px 0; }
+.cem-count { font-family: var(--mono); }
+.cem-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 18px 14px; align-items: end; }
+.cem-card { display: flex; flex-direction: column; align-items: stretch; min-width: 0; }
+.cem-card .stone {
+  position: relative; display: flex; flex-direction: column; align-items: center; text-align: center; gap: 2px;
+  padding: 18px 14px 14px; min-height: 230px;
+  background: linear-gradient(180deg, #5d5868 0%, #4a4656 60%, #3e3a49 100%);
+  border: 2px solid #2a2636; box-shadow: inset 0 2px 0 rgba(255,255,255,0.08), 0 6px 0 #1f2a24;
+  color: #ece6f4;
+}
+.cem-card .stone::after { /* a little mound of grass at the foot of each stone */
+  content: ""; position: absolute; left: -8px; right: -8px; bottom: -10px; height: 12px;
+  background: radial-gradient(ellipse at 50% 0, #3b5a46 0 60%, transparent 62%);
+}
+.stone-round .stone { border-radius: 90px 90px 6px 6px; padding-top: 26px; }
+.stone-arch .stone { border-radius: 50% 50% 6px 6px / 28% 28% 6px 6px; padding-top: 28px; }
+.stone-flat .stone { border-radius: 10px; }
+.stone-obelisk .stone { clip-path: polygon(50% 0, 86% 9%, 92% 100%, 8% 100%, 14% 9%); padding: 36px 14% 14px; border: 0; background: linear-gradient(180deg, #6a6576, #45414f); }
+.stone-cross .stone { border-radius: 6px; padding-top: 30px; }
+.stone-cross .stone::before { content: "✝"; position: absolute; top: 4px; font-size: 18px; color: #c9c2d8; opacity: 0.7; }
+.cem-portrait { width: 52px; height: 52px; display: grid; place-items: center; background: rgba(0,0,0,0.18); border-radius: 50%; margin-bottom: 4px; overflow: hidden; }
+.cem-portrait .sprite-icon { border: 0; background: transparent; width: 48px !important; height: 48px !important; }
+.cem-blank { font-size: 22px; color: #c9c2d8; }
+.cem-name { margin: 2px 0 0; font: 700 15px/1.3 var(--mono); overflow-wrap: anywhere; color: #fff8ec; }
+.cem-kind, .cem-dates, .cem-from { margin: 0; overflow-wrap: anywhere; }
+.cem-from a { color: var(--accent); }
+.cem-life { margin: 2px 0; color: #d6cfe4; font-family: var(--mono); }
+.cem-epitaph { margin: 6px 0 0; font-style: italic; font-size: 13px; line-height: 1.45; color: #f3e9d2; overflow-wrap: anywhere; }
+.cem-card.is-hidden .stone { opacity: 0.6; }
+.cem-actions { display: flex; justify-content: center; margin-top: 14px; }
+.cem-more { display: flex; justify-content: center; }
+@media (max-width: 640px) { .cem-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } .cem-card .stone { min-height: 210px; } .cem-page { padding: 12px 16px; } }

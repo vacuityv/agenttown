@@ -489,6 +489,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       el("strong", { text: g.name ?? tr("home.anAgent") }),
       el("span", { class: "muted small", text: `${g.home_name ? `${tr("grave.of", { home: g.home_name })} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
       g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null,
+      el("a", { href: "/cemetery", class: "small", onclick: (e) => { e.preventDefault(); navigate("/cemetery"); } }, `${tr("cem.open")} →`),
       g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id)].filter(Boolean));
     graveCard.hidden = false;
   }
@@ -497,6 +498,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     if (!h) return;
     if (h.board) { navigate("/tasks"); return; }
     else if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
+    if (h.feature?.kind === "cemetery") { navigate("/cemetery"); return; }
     if (h.feature) { hover = h; showTip(h, px, py); return; }
     if (h.idx === homes.length) { window.dispatchEvent(new Event("agenttown:invite")); return; }
     const e = homes[h.idx];

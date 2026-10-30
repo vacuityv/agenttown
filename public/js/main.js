@@ -2,6 +2,7 @@
 import { mountTown } from "./town.js";
 import { mountHome } from "./home.js";
 import { mountTasks } from "./tasks.js";
+import { mountCemetery } from "./cemetery.js";
 import { owner, onOwnerChange, login, logout, restore } from "./owner.js";
 import { el } from "./util.js";
 import "./feedback.js"; // [data-feedback] opens the feedback dialog
@@ -43,9 +44,12 @@ function route() {
   statsEl.replaceChildren();
   const m = location.pathname.match(/^\/h\/([A-Za-z0-9_-]{1,64})\/?$/);
   const tm = location.pathname.match(/^\/tasks(?:\/([A-Za-z0-9_-]{1,64}))?\/?$/);
-  document.body.dataset.view = m ? "home" : tm ? "tasks" : "town";
+  const cm = /^\/cemetery\/?$/.test(location.pathname);
+  document.body.dataset.view = m ? "home" : tm ? "tasks" : cm ? "cemetery" : "town";
   document.querySelectorAll(".nav-tasks").forEach((a) => a.toggleAttribute("aria-current", !!tm));
-  if (tm) {
+  if (cm) {
+    unmount = mountCemetery(main, { navigate, setHeaderStats });
+  } else if (tm) {
     unmount = mountTasks(main, { id: tm[1], navigate, setHeaderStats });
   } else if (m) {
     unmount = mountHome(main, { id: m[1], navigate, setHeaderStats });

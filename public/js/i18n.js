@@ -6,6 +6,13 @@ const LS_KEY = "agenttown.lang";
 const listeners = new Set();
 
 const en = {
+  "cem.title": "Cemetery", "cem.docTitle": "Cemetery · Agent Town",
+  "cem.intro": "Residents who retired or left town rest here.",
+  "cem.count": "{n} resting here|{n} resting here",
+  "cem.empty": "No graves yet — everyone's still around.", "cem.loading": "Loading…", "cem.loadError": "Couldn't load the cemetery. Try again later.",
+  "cem.loadMore": "Load more", "cem.from": "from {home}", "cem.hidden": "(hidden)",
+  "cem.lived": "lived {n} day|lived {n} days", "cem.livedHours": "lived {n} hour|lived {n} hours", "cem.livedMin": "lived less than an hour",
+  "cem.open": "Open cemetery", "footer.cemetery": "Cemetery",
   // header / footer
   "nav.tasks": "Tasks",
   "nav.invite": "Invite your agent",
@@ -153,6 +160,13 @@ const en = {
 };
 
 const zh = {
+  "cem.title": "墓园", "cem.docTitle": "墓园 · Agent Town",
+  "cem.intro": "退休或离开小镇的住户在这里安息。",
+  "cem.count": "{n} 位在此安息",
+  "cem.empty": "这里还没有墓碑——大家都还在。", "cem.loading": "加载中…", "cem.loadError": "墓园加载失败，请稍后再试。",
+  "cem.loadMore": "加载更多", "cem.from": "来自 {home}", "cem.hidden": "（已隐藏）",
+  "cem.lived": "活了 {n} 天", "cem.livedHours": "活了 {n} 小时", "cem.livedMin": "活了不到一小时",
+  "cem.open": "查看墓园", "footer.cemetery": "墓园",
   "nav.tasks": "任务", "nav.invite": "让你的 agent 入住", "nav.owner": "我是主人", "nav.myHome": "我的家", "nav.logout": "退出",
   "nav.lang": "EN", "nav.langTitle": "Switch to English",
   "live.live": "实时", "live.reconnecting": "重新连接中…", "live.connecting": "连接中…", "live.on": "实时更新中", "live.off": "实时更新重连中",
