@@ -202,9 +202,10 @@ export async function setLook(id: string, look: string | null) {
 async function ensurePersona(c: Q, homeId: string, name: string, kind: string, emits: BusEvent[]): Promise<Row> {
   const existing = await one(c, sql.personaByName, [homeId, name]);
   if (existing && existing.kind === kind) return existing;
-  const res = await run(c, sql.upsertPersona, [newId("p"), homeId, name, kind, Date.now()]);
+  const fresh = newId("p");
+  await run(c, sql.upsertPersona, [fresh, homeId, name, kind, Date.now()]);
   const p = (await one(c, sql.personaByName, [homeId, name]))!;
-  if (res.affectedRows === 1) { // newly created
+  if (p.id === fresh) { // newly created (affectedRows is unreliable with found-rows semantics)
     if ((await one(c, sql.countPersonas, [homeId]))!.n > LIMITS.personasPerHome) {
       throw new ApiError(429, "too_many_personas", `A home can have at most ${LIMITS.personasPerHome} personas.`);
     }
@@ -255,9 +256,12 @@ export async function report(homeId: string, r: ReportInput) {
     const persona = await ensurePersona(c, homeId, r.persona.name, r.persona.kind, emits);
     const parent = r.parent ? await one(c, sql.sessionByKey, [homeId, r.parent]) : undefined;
 
-    const created = (await run(c, sql.ensureSession,
-      [newId("s"), homeId, persona.id, r.session, parent?.id ?? null, now, now])).affectedRows === 1;
+    // Insert-if-missing, then read the row. Don't trust affectedRows (mysql2 reports found rows, so an existing row
+    // also gives 1): the session is new iff it carries the id we just generated.
+    const fresh = newId("s");
+    await run(c, sql.ensureSession, [fresh, homeId, persona.id, r.session, parent?.id ?? null, now, now]);
     const s = (await one(c, sql.sessionByKeyForUpdate, [homeId, r.session]))!;
+    const created = s.id === fresh;
     if (created || s.ended_at !== null) {
       if ((await one(c, sql.countOpenOthers, [homeId, s.id]))!.n >= LIMITS.activeSessionsPerHome) {
         throw new ApiError(429, "too_many_sessions", `At most ${LIMITS.activeSessionsPerHome} open sessions per home.`);

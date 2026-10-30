@@ -372,7 +372,7 @@ dialog input {
   .home-page { align-items: start; }
   .home-page > .side {
     position: sticky; top: 12px; align-self: start;
-    max-height: calc(100dvh - 110px); overflow-y: auto; overscroll-behavior: contain;
+    max-height: calc(100dvh - 135px); overflow-y: auto; overscroll-behavior: contain;
     padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--line) transparent;
   }
 }

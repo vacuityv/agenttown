@@ -84,6 +84,7 @@ try {
   assert.equal(world.totals.homes, 1);
   const stats = await get(`/v1/homes/${cfg.home_id}/stats`);
   assert.equal(stats.daily[0].tasks, 2);
+  assert.ok(stats.daily[0].busy_ms > 0, "busy time is credited between reports of an existing session");
   assert.ok(stats.tools.some((t: any) => t.tool === "Bash"));
   assert.equal((await get(`/v1/homes/${cfg.home_id}/events`)).events.length, 4);
 
