@@ -357,7 +357,10 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     const ext = sim.plan.ext;
     const totalW = ext.x1 - ext.x0 + MARGIN * 2, totalH = ext.y1 - ext.y0 + MARGIN * 2;
     // even device scale keeps the half-size sprites on whole pixels
-    S = Math.max(2, Math.floor((avail * dpr) / totalW / 2) * 2);
+    // Fit the width AND the visible height (tall/round dwellings must not push the page past one screen).
+    const top = roomWrap.getBoundingClientRect().top + window.scrollY;
+    const availH = window.innerWidth > 960 ? Math.max(240, window.innerHeight - Math.min(top, 160) - 40) : Infinity;
+    S = Math.max(2, Math.floor(Math.min((avail * dpr) / totalW, (availH * dpr) / totalH) / 2) * 2);
     S = Math.min(S, Math.round(8 * dpr));
     fitCanvas(canvas, (totalW * S) / dpr, (totalH * S) / dpr);
     W = canvas.width; H = canvas.height;
