@@ -1,7 +1,7 @@
 // "/h/:id" — one Home, up close. Same top-down interior as the town (shared HomeSim renderer), drawn
 // bigger, with speech bubbles (task titles decrypted locally for the owner), side panel and stats.
 import { api, openStream } from "./api.js";
-import { HomeSim, statusLine, SPOT_LABEL, setDwelling, onDwellingChange } from "./interior.js";
+import { HomeSim, statusLine, SPOT_LABEL, setHomeMeta, onDwellingChange } from "./interior.js";
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
@@ -18,6 +18,11 @@ function statusText(s) {
 }
 const STATUS_COLOR = { tool: "#ffcf6e", thinking: "#8bd3c7", waiting: "#ff9bb3", idle: "#9a8fb5", ended: "#6e6680" };
 const MARGIN = 6; // art px around the house
+function applyMeta(h) {
+  const m = {};
+  for (const k of ["dwelling", "style", "art", "art_status"]) if (k in h) m[k] = h[k];
+  if (Object.keys(m).length) setHomeMeta(h.id, m);
+}
 
 export function mountHome(root, { id, navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
@@ -79,7 +84,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     try {
       const r = await api(`/homes/${encodeURIComponent(id)}`);
       home = r.home;
-      if (home.dwelling !== undefined) setDwelling(id, home.dwelling);
+      applyMeta(home);
       const first = !sessions.size && !sim.ents.size;
       sim.setPersonas(r.personas);
       const open = new Set(r.sessions.map((s) => s.id));
@@ -123,7 +128,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   }
 
   const closeStream = openStream(`home=${encodeURIComponent(id)}`, {
-    home: (h) => { if (h.id === id) { home = { ...home, ...h }; if (h.dwelling !== undefined) setDwelling(id, h.dwelling); renderHead(); } },
+    home: (h) => { if (h.id === id) { home = { ...home, ...h }; applyMeta(h); renderHead(); } },
     say: (m) => {
       sim.say(m.persona_id, m.text, m.ts);
       timeline.querySelector(".muted.small")?.remove();
@@ -282,7 +287,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     layout();
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = "#1f3b33";
+    ctx.fillStyle = "#273e32";
     ctx.fillRect(0, 0, W, H);
     anchors = sim.draw(ctx, X0, Y0, S, t, { reduced, now: t });
     const st = sim.stats();

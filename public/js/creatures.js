@@ -77,7 +77,7 @@ function rasterize(look, bucket) {
       const c = document.createElement("canvas");
       c.width = pw; c.height = ph;
       try { c.getContext("2d").drawImage(img, 0, 0, pw, ph); } catch {}
-      r.canvases[i] = c;
+      r.canvases[i] = c.width && c.height ? c : false;
       r.ready++;
       URL.revokeObjectURL(url);
     };
@@ -94,7 +94,8 @@ export function svgRaster(key, vb, style, svgs, px) {
   const id = `${key}|${bucket}`;
   let r = generic.get(id);
   if (!r) {
-    r = rasterize({ key: `g:${key}`, vb, style, parts: svgs.map((svg, i) => ({ id: "l" + i, svg })) }, bucket);
+    const vbn = Array.isArray(vb) ? vb : String(vb).trim().split(/[\s,]+/).map(Number);
+    r = rasterize({ key: `g:${key}`, vb: vbn, style, parts: svgs.map((svg, i) => ({ id: "l" + i, svg })) }, bucket);
     generic.set(id, r);
     if (generic.size > 200) generic.delete(generic.keys().next().value);
   }

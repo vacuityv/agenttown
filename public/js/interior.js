@@ -340,11 +340,12 @@ export function onFootprint(plan, x, y) {
 
 function R(c, x, y, w, h, col) { c.fillStyle = col; c.fillRect(x, y, w, h); }
 const baseCache = new Map();
+const baseScale = (s) => Math.min(8, Math.max(1, Math.round(s)));
 
 export function houseBase(homeId, desks, beds, s = 1) {
   const plan = planFor(homeId);
   const pixel = plan.rstyle === "pixel";
-  const sc = pixel ? 1 : Math.max(1, Math.round(s));
+  const sc = pixel ? 1 : baseScale(s);
   const key = `${homeId}|${desks}|${beds}|${season()}|${plan.rstyle}|${sc}`;
   let img = baseCache.get(key);
   if (img) { baseCache.delete(key); baseCache.set(key, img); return img; }
@@ -455,7 +456,7 @@ export function houseBase(homeId, desks, beds, s = 1) {
 const overlayCache = new Map();
 let artStyle = "pixel", artScale = 1;
 function cachedArt(key, w, h, paint) {
-  const sc = artStyle === "pixel" ? 1 : Math.max(1, Math.round(artScale));
+  const sc = artStyle === "pixel" ? 1 : baseScale(artScale);
   const k2 = `${key}|${artStyle}|${sc}`;
   let img = overlayCache.get(k2);
   if (!img) {
@@ -956,7 +957,7 @@ export class HomeSim {
     else {
     artStyle = plan.rstyle; artScale = s;
     const base = houseBase(this.homeId, desks, beds, s);
-    const bs = plan.rstyle === "pixel" ? s : 1 * (s / Math.max(1, Math.round(s)));
+    const bs = plan.rstyle === "pixel" ? s : s / baseScale(s);
     if (plan.rstyle !== "pixel") ctx.imageSmoothingEnabled = true;
     ctx.drawImage(base, Math.round(X0 - PAD * s), Math.round(Y0 - PAD * s), Math.round(base.width * bs), Math.round(base.height * bs));
     ctx.imageSmoothingEnabled = false;

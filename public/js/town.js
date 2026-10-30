@@ -2,7 +2,8 @@
 // down into each roofless home and see its residents living inside. Only homes in/near the viewport are
 // fetched (/v1/town) and simulated. Also: the village square(s), ponds, groves and the cemetery.
 import { api, fetchWorld, openStream } from "./api.js";
-import { HomeSim, statusLine, drawFootprint, onFootprint, setDwelling, onDwellingChange } from "./interior.js";
+import { HomeSim, statusLine, drawFootprint, onFootprint, setDwelling, setHomeMeta, onDwellingChange } from "./interior.js";
+import { RENDER_STYLES } from "./paint.js";
 import {
   CHUNK_PX, tileSize, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
   featureImage, gravePos, CEMETERY_CAP, drawLowLod, riverY, inPoly,
@@ -35,6 +36,13 @@ function glowImage() {
 }
 
 const STONES = ["round", "cross", "obelisk", "flat"];
+const META_KEYS = ["dwelling", "style", "art", "art_status"];
+function applyMeta(h) {
+  const m = {};
+  for (const k of META_KEYS) if (k in h) m[k] = h[k];
+  if (Object.keys(m).length) setHomeMeta(h.id, m);
+}
+
 function drawHeadstone(ctx, x, y, s, shape, fresh) {
   ctx.save();
   ctx.translate(x, y); ctx.scale(s, s);
@@ -97,7 +105,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
 
   function addHome(h) {
-    if (h.dwelling !== undefined) setDwelling(h.id, h.dwelling);
+    applyMeta(h);
     if (byId.has(h.id)) { Object.assign(byId.get(h.id).home, h); return; }
     const idx = Number.isInteger(h.slot) ? h.slot : homes.length; // server may send a stable slot
     const e = { home: h, idx, open: h.open ?? 0, busy: h.busy ?? 0, removed: false };
@@ -116,7 +124,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       const w = await fetchWorld();
       for (const h of w.homes) {
         const e = byId.get(h.id);
-        if (e) { Object.assign(e.home, h); e.open = h.open; e.busy = h.busy; if (h.dwelling !== undefined) setDwelling(h.id, h.dwelling); } else addHome(h);
+        if (e) { Object.assign(e.home, h); e.open = h.open; e.busy = h.busy; applyMeta(h); } else addHome(h);
       }
       for (let i = 0; i < fake; i++) addHome({ id: "fake_" + i, name: "Fake home " + i, open: hash32("o" + i) % 4, busy: hash32("b" + i) % 3, fake: true });
       totals.homes = w.totals.homes + fake;
@@ -155,7 +163,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   const closeStream = openStream("", {
     home: (h) => {
       const isNew = !byId.has(h.id);
-      addHome({ id: h.id, name: h.name, created_at: h.created_at, dwelling: h.dwelling, description: h.description, slot: h.slot, open: 0, busy: 0 });
+      addHome({ open: 0, busy: 0, ...h });
       if (isNew) { totals.homes++; refreshFeatures(); updateHeader(); }
     },
     counts: onCounts,
@@ -206,7 +214,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
   const zoomIndex = () => ZOOMS.indexOf(cam.zoom);
   function zoomBy(d) { zoomTo(zoomIndex() + d, W / dpr / 2, H / dpr / 2); }
-  function recenter() { [cam.x, cam.y] = homeCenter(0); }
+  const firstSlot = () => Math.max(0, homes.findIndex((e) => e && !e.removed));
+  function recenter() { [cam.x, cam.y] = homeCenter(firstSlot()); }
 
   // ---- residents of homes near the viewport ----
   function agentCount() { let n = 0; for (const v of sims.values()) n += v.sim.ents.size; return n; }
@@ -236,10 +245,10 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     try {
       const r = await api(`/town?ids=${ids.map(encodeURIComponent).join(",")}`);
       for (const h of r.homes) {
-        if (h.dwelling !== undefined) setDwelling(h.id, h.dwelling);
+        applyMeta(h);
         let v = sims.get(h.id);
         if (!v) { v = { sim: new HomeSim(h.id), loadedAt: 0 }; sims.set(h.id, v); }
-        v.sim.setPersonas(h.personas);
+        v.sim.setPersonas(demoSprites ? h.personas.map((p) => (demoSprites[p.name] ? { ...p, sprite: demoSprites[p.name] } : p)) : h.personas);
         v.sim.setAgents(h.agents);
         for (const m of h.says ?? []) v.sim.say(m.persona_id, m.text, m.ts);
         v.loadedAt = performance.now();
@@ -635,13 +644,18 @@ export function mountTown(root, { navigate, setHeaderStats }) {
 
   // Dev-only previews for server features that may not be deployed yet: /?demo=graves,say,dwell
   const demo = new Set((new URLSearchParams(location.search).get("demo") ?? "").split(","));
-  let demoTimer = 0;
+  let demoTimer = 0, demoSprites = null;
+  if (demo.has("sprites")) import("./demo-fixtures.js").then((m) => { demoSprites = m.SPRITE_FIXTURES; for (const v of sims.values()) v.loadedAt = 0; });
   function runDemo() {
     if (demo.has("graves")) {
       const names = ["Ada", "Bolt", "Clover", "Dot", "Echo", "Fern", "Gizmo", "Hazel", "Ink", "Juno", "Kip", "Lumen", "Mochi", "Nib", "Orbit", "Pip", "Quill", "Rune"];
       graves.list = names.map((name, i) => ({ id: "t" + i, name, kind: i % 2 ? "codex" : "claude-code", home_name: "Old Mill", born_at: Date.now() - (40 - i) * 86400_000, died_at: Date.now() - (18 - i) * 86400_000, epitaph: i % 3 ? "Shipped it." : "Ran out of context, never out of kindness.", sprite: null }));
       graves.total = graves.list.length;
     }
+    if (demo.has("styles")) homes.forEach((e, i) => e && setHomeMeta(e.home.id, { style: RENDER_STYLES[i % RENDER_STYLES.length] }));
+    if (demo.has("art")) import("./demo-fixtures.js").then(({ ART_FIXTURES }) => {
+      ART_FIXTURES.forEach((art, i) => { const e = homes[i + 1]; if (e) setHomeMeta(e.home.id, { art, art_status: "ready", style: "storybook" }); });
+    });
     if (demo.has("dwell")) {
       const kinds = ["house", "cottage", "fenced-yard", "tent", "treehouse", "burrow", "greenhouse", "pond", "boat", "cave", "mushroom-ring", "lighthouse", "garden", "shed"];
       homes.forEach((e, i) => e && setDwelling(e.home.id, kinds[i % kinds.length]));
@@ -657,7 +671,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     }
   }
 
-  loadWorld().then(() => { const [x, y] = homeCenter(0); cam.x = x; cam.y = y; runDemo(); refreshResidents(); });
+  loadWorld().then(() => { recenter(); runDemo(); refreshResidents(); });
   if (!demo.has("graves")) loadCemetery();
   updateHeader();
   draw(performance.now());

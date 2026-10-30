@@ -393,8 +393,10 @@ app.get("/agents.md", templated("agents.md", "text/markdown; charset=utf-8"));
 app.get("/changelog.md", templated("changelog.md", "text/markdown; charset=utf-8"));
 app.get("/cli/agenttown.mjs", templated("cli/agenttown.mjs", "text/javascript; charset=utf-8"));
 app.get("/cli/agenttown-mcp.mjs", templated("../plugins/mcp/agenttown-mcp.mjs", "text/javascript; charset=utf-8"));
-app.get("/h/:id", serveStatic({ path: "./public/index.html" }));
-app.use("/*", serveStatic({ root: "./public" }));
+// Unversioned assets: make browsers (and Cloudflare) revalidate so a deploy never leaves a page half-updated.
+const revalidate = (_path: string, c: Context) => { c.header("cache-control", "no-cache"); };
+app.get("/h/:id", serveStatic({ path: "./public/index.html", onFound: revalidate }));
+app.use("/*", serveStatic({ root: "./public", onFound: revalidate }));
 
 setInterval(() => {
   store.sweep().catch((e) => console.error("sweep failed", e));
