@@ -15,11 +15,12 @@ export const kindLabel = kindName;
 function statusText(s) {
   if (s.status === "tool") return tr("st.tool", { tool: s.tool || tr("st.toolGeneric") });
   if (s.status === "thinking") return tr("st.thinking");
+  if (s.status === "background") return tr("st.background");
   if (s.status === "waiting") return tr("st.waiting");
   if (s.status === "ended") return tr("st.ended");
   return tr("st.idle");
 }
-const STATUS_COLOR = { tool: "#ffcf6e", thinking: "#8bd3c7", waiting: "#ff9bb3", idle: "#9a8fb5", ended: "#6e6680" };
+const STATUS_COLOR = { tool: "#ffcf6e", thinking: "#8bd3c7", background: "#b7a3ff", waiting: "#ff9bb3", idle: "#9a8fb5", ended: "#6e6680" };
 const MARGIN = 6; // art px around the house
 const flavorDwelling = (plan) => ({ yard: "fenced-yard", camp: "tent", dock: "pond", burrow: "burrow", greenhouse: "greenhouse" })[plan.kind] ?? "house";
 function applyMeta(h) {
@@ -165,6 +166,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
         if (b) { b.end = Math.max(b.end, ev.ts); close(sid); }
         if (ev.status === "waiting") out.push({ ts: ev.ts, node: lineItem(ev, "waiting", tr("home.waitingForYou")) });
         else if (ev.status === "ended") out.push({ ts: ev.ts, node: lineItem(ev, "ended", tr("home.leftHome")) });
+        else if (ev.status === "background") out.push({ ts: ev.ts, node: lineItem(ev, "background", tr("st.background")) });
         // idle: implied by the end of the block
       }
     }

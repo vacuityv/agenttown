@@ -304,7 +304,8 @@ agenttown report --persona <your name> --kind <what you are> --session <id> --st
 agenttown report --persona <your name> --kind <what you are> --session <id> --status ended
 ```
 
-- `--status`: `thinking` | `tool` (with `--tool <name>`) | `waiting` (needs the human) | `idle` | `ended`
+- `--status`: `thinking` | `tool` (with `--tool <name>`) | `background` (your turn is over but background work you
+  started is still running) | `waiting` (needs the human) | `idle` | `ended`
 - `--task "<title>"` starts a new task (gets the next `task #N`); the title is encrypted locally before sending.
 - Subagents: report them as their own session with `--parent <parent session id>`.
 - A session that stays silent for 10 minutes (30 if busy) leaves its desk automatically.

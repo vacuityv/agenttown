@@ -876,7 +876,7 @@ export class HomeSim {
     let kind;
     if (a.status === "tool") kind = TOOL_SPOT[a.tool] ?? "desk";
     if (kind !== "desk" && kind && !["door", "rest", "bed"].includes(kind) && !plan.spots[kind]?.pts?.length) kind = "desk";
-    else if (a.status === "thinking") kind = "desk";
+    else if (a.status === "thinking" || a.status === "background") kind = "desk"; // background: stays at the desk, watching it run
     else if (a.status === "waiting") kind = plan.art ? "rest" : "door";
     else if (a.status === "idle") kind = a.last_seen && Date.now() - a.last_seen > IDLE_SLEEP_MS ? "bed" : "rest";
     else kind = "desk";
@@ -1033,7 +1033,7 @@ export class HomeSim {
       img = e.facing < 0 ? poses.walkL[f] : poses.walk[f];
       topArt = e.y - h;
     } else if (e.pose === "seat") {
-      img = frameFor(sheet, status === "waiting" ? "idle" : status, t, e.seed);
+      img = frameFor(sheet, status === "waiting" ? "idle" : status === "background" ? "thinking" : status, t, e.seed);
       topArt = e.y - 24 * k; // desk covers the legs
     } else if (e.pose === "sit") {
       img = poses.sit; topArt = e.y - h;
@@ -1072,7 +1072,7 @@ export class HomeSim {
     else if (e.pose === "sleep") footArt = (bed ? bed.y : e.y - 9) + 1.5 + 32 * k;
     const footY = Y0 + footArt * s;
     const status = e.a.status;
-    const state = e.pose === "sleep" ? "sleeping" : e.pose === "sit" ? "idle" : status === "tool" ? "working" : status === "thinking" ? "thinking" : "idle";
+    const state = e.pose === "sleep" ? "sleeping" : e.pose === "sit" ? "idle" : status === "tool" ? "working" : status === "thinking" || status === "background" ? "thinking" : "idle";
     drawV2(ctx, look, cx, footY, h, { state, pose: e.pose, dir: e.facing, mini: e.mini, travel: e.travel ?? 0, t: t + e.seed * 37, shadow: e.pose === "walk" || e.pose === "stand" });
     const age = e.dying ? now - e.dying : now - e.born;
     if (!reduced && age >= 0 && age < 420) {
@@ -1110,6 +1110,7 @@ export function statusLine(e) {
   if (e.ending) return tr("st.bye");
   if (a.status === "tool") return tr("st.tool", { tool: a.tool || tr("st.toolGeneric") });
   if (a.status === "thinking") return tr("st.thinking");
+  if (a.status === "background") return tr("st.background");
   if (a.status === "waiting") return tr("st.needsYou");
   return tr("st.resting");
 }

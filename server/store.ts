@@ -4,7 +4,7 @@ import { LIMITS } from "./config.ts";
 import { ApiError, newId } from "./util.ts";
 import * as market from "./market-core.ts";
 
-export const STATUSES = ["thinking", "tool", "waiting", "idle", "ended"] as const;
+export const STATUSES = ["thinking", "tool", "background", "waiting", "idle", "ended"] as const;
 export type Status = (typeof STATUSES)[number];
 const BUSY = new Set<string>(["thinking", "tool"]);
 
@@ -50,7 +50,8 @@ const sql = {
   staleSessions: `
     SELECT id FROM sessions WHERE ended_at IS NULL AND (
       (status IN ('thinking', 'tool') AND last_seen < ?) OR
-      (status NOT IN ('thinking', 'tool') AND last_seen < ?))`,
+      (status = 'background' AND last_seen < ?) OR
+      (status NOT IN ('thinking', 'tool', 'background') AND last_seen < ?))`,
 
   insertEvent: "INSERT INTO events (home_id, session_id, ts, status, tool, task_no) VALUES (?, ?, ?, ?, ?, ?)",
   addBusy: `
@@ -137,7 +138,7 @@ function scheduleAgent(id: string) {
 
 // The town view only needs per-home counts; coalesce them to at most one event per home per second.
 const countsSql = `
-  SELECT COUNT(*) AS open, COALESCE(SUM(status IN ('thinking', 'tool')), 0) AS busy
+  SELECT COUNT(*) AS open, COALESCE(SUM(status IN ('thinking', 'tool', 'background')), 0) AS busy
   FROM sessions WHERE home_id = ? AND ended_at IS NULL`;
 const countsPending = new Map<string, NodeJS.Timeout>();
 function scheduleCounts(homeId: string) {
@@ -323,13 +324,13 @@ const worldSql = `
   SELECT h.id, h.slot, h.name, h.created_at, h.dwelling, h.style, h.description,
     h.box_pub, h.rep_posted, h.rep_done, h.rep_rating_sum, h.rep_rating_n,
     COUNT(s.id) AS open,
-    COALESCE(SUM(s.status IN ('thinking', 'tool')), 0) AS busy
+    COALESCE(SUM(s.status IN ('thinking', 'tool', 'background')), 0) AS busy
   FROM homes h LEFT JOIN sessions s ON s.home_id = h.id AND s.ended_at IS NULL
   GROUP BY h.id ORDER BY h.slot LIMIT ? OFFSET ?`;
 const totalsSql = `
   SELECT (SELECT COUNT(*) FROM homes) AS homes,
     (SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL) AS open,
-    (SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL AND status IN ('thinking', 'tool')) AS busy`;
+    (SELECT COUNT(*) FROM sessions WHERE ended_at IS NULL AND status IN ('thinking', 'tool', 'background')) AS busy`;
 
 export async function world(limit: number, offset: number) {
   const [totals, rows] = await Promise.all([one(db(), totalsSql), all(db(), worldSql, [limit, offset])]);
@@ -360,7 +361,7 @@ export const events = (homeId: string, before: number, limit: number) =>
 
 export async function sweep() {
   const now = Date.now();
-  const stale = await all(db(), sql.staleSessions, [now - LIMITS.busyTimeoutMs, now - LIMITS.idleTimeoutMs]);
+  const stale = await all(db(), sql.staleSessions, [now - LIMITS.busyTimeoutMs, now - LIMITS.backgroundTimeoutMs, now - LIMITS.idleTimeoutMs]);
   const ended: string[] = [];
   await tx(async (c) => {
     ended.length = 0;

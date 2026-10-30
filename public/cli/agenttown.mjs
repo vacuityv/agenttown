@@ -15,7 +15,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.1.0";
+export const CLI_VERSION = "1.1.1";
 const CONFIG_PATH = process.env.AGENTTOWN_CONFIG || join(homedir(), ".agenttown", "config.json");
 
 // ---------- config ----------
@@ -279,7 +279,7 @@ export async function sendReport(cfg, { persona, kind, session, parent, status, 
 async function cmdReport(args) {
   const cfg = requireConfig();
   if (!args.persona || !args.session || !args.status) {
-    fail(`Usage: agenttown report --persona <name> --kind <kind> --session <id> --status thinking|tool|waiting|idle|ended [--tool <name>] [--task "<title>"] [--parent <session id>]`);
+    fail(`Usage: agenttown report --persona <name> --kind <kind> --session <id> --status thinking|tool|background|waiting|idle|ended [--tool <name>] [--task "<title>"] [--parent <session id>]`);
   }
   const r = await sendReport(cfg, {
     persona: args.persona, kind: args.kind, session: args.session, parent: args.parent,
@@ -365,7 +365,11 @@ const COMMANDS = {
 // detached `hook-flush` child that sends the spool in order. Only status, public tool names and
 // encrypted titles are ever sent — never prompts, code, paths or commands.
 
-export const HOOK_VERSION = 2; // 2: device credentials, silent rekey after a merge
+export const HOOK_VERSION = 3; // 2: device credentials, silent rekey after a merge; 3: "background" status
+
+const DONE_TASK = /^(completed|complete|done|finished|failed|error|killed|stopped|cancell?ed|exited)$/i;
+const runningBackground = (ev) =>
+  Array.isArray(ev.background_tasks) && ev.background_tasks.some((t) => t && !DONE_TASK.test(String(t.status ?? "")));
 const STATE_DIR = dirname(CONFIG_PATH);
 const SPOOL = join(STATE_DIR, "spool.jsonl");
 const LOCK = join(STATE_DIR, "spool.lock");
@@ -469,6 +473,9 @@ export function mapHookEvent(ev, { encrypt = (t) => t } = {}) {
     case "SubagentStop":
       return aid ? [{ ...sub, status: "ended" }] : [];
     case "Stop":
+      // The turn is over, but Claude Code may have left background work running (background shells, subagents,
+      // monitors, …): Stop lists it in background_tasks. When it finishes Claude is re-invoked (UserPromptSubmit).
+      return [{ ...main, status: runningBackground(ev) ? "background" : "idle" }];
     case "StopFailure":
     case "Interrupt": // Codex
       return [{ ...main, status: "idle" }];

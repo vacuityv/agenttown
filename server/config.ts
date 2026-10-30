@@ -19,6 +19,8 @@ export const LIMITS = {
   // Sweeper: sessions silent this long leave their desk.
   idleTimeoutMs: 10 * 60_000,
   busyTimeoutMs: 30 * 60_000,
+  // Turn ended but background work (shells, subagents…) is still running: long builds are normal.
+  backgroundTimeoutMs: 2 * 3600_000,
   retentionMs: 14 * 24 * 3600_000,
 };
 

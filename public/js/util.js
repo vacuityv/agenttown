@@ -62,7 +62,7 @@ export function hhmm(ts) {
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
 }
 
-export const BUSY = new Set(["thinking", "tool"]);
+export const BUSY = new Set(["thinking", "tool", "background"]);
 
 // Canvas that tracks its CSS box and device pixel ratio.
 export function fitCanvas(canvas, cssW, cssH) {

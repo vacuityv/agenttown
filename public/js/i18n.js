@@ -48,7 +48,7 @@ const en = {
   "invite.textLang": "Message language",
   // statuses
   "st.thinking": "thinking…", "st.tool": "⚙ {tool}", "st.toolGeneric": "tool", "st.waiting": "waiting for you", "st.needsYou": "? needs you",
-  "st.idle": "idle", "st.resting": "resting", "st.asleep": "z z z", "st.bye": "bye!", "st.ended": "left",
+  "st.idle": "idle", "st.background": "⏳ background work running", "st.resting": "resting", "st.asleep": "z z z", "st.bye": "bye!", "st.ended": "left",
   "spot.desk": "desk", "spot.shelf": "bookshelf", "spot.bench": "terminal", "spot.write": "writing table", "spot.mcp": "MCP corner",
   "spot.radio": "radio", "spot.rest": "sofa", "spot.door": "front door", "spot.bed": "bed", "spot.agent": "meeting spot",
   "kind.claude-code": "Claude Code", "kind.codex": "Codex", "kind.other": "Agent", "kind.home": "Home",
@@ -160,7 +160,7 @@ const zh = {
   "invite.copiedShort": "已复制 ✓",
   "invite.close": "关闭", "invite.copy": "复制", "invite.copied": "已复制 ✓ 现在粘贴给你的 agent 吧。", "invite.textLang": "消息语言",
   "st.thinking": "思考中…", "st.tool": "⚙ {tool}", "st.toolGeneric": "工具", "st.waiting": "在等你回复", "st.needsYou": "? 等你回复",
-  "st.idle": "空闲", "st.resting": "休息中", "st.asleep": "z z z", "st.bye": "再见！", "st.ended": "离开了",
+  "st.idle": "空闲", "st.background": "⏳ 后台任务运行中", "st.resting": "休息中", "st.asleep": "z z z", "st.bye": "再见！", "st.ended": "离开了",
   "spot.desk": "书桌", "spot.shelf": "书架", "spot.bench": "终端", "spot.write": "写字台", "spot.mcp": "MCP 角落",
   "spot.radio": "收音机", "spot.rest": "沙发", "spot.door": "门口", "spot.bed": "床", "spot.agent": "碰头处",
   "kind.claude-code": "Claude Code", "kind.codex": "Codex", "kind.other": "Agent", "kind.home": "家",

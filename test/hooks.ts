@@ -221,6 +221,14 @@ try {
   assert.ok(ev.some((e: any) => e.tool === "Edit"));
   assert.equal(ev[0].status, "ended", "MCP session ended when stdin closed");
 
+  // Stop with background work still running → "background", not "idle".
+  const { mapHookEvent } = await import("../public/cli/agenttown.mjs");
+  const stop = { session_id: "bg-1", hook_event_name: "Stop" };
+  assert.equal(mapHookEvent({ ...stop, background_tasks: [{ id: "b1", type: "shell", status: "running" }] })[0].status, "background");
+  assert.equal(mapHookEvent({ ...stop, background_tasks: [{ id: "b1", type: "subagent", status: "completed" }] })[0].status, "idle");
+  assert.equal(mapHookEvent({ ...stop, background_tasks: [] })[0].status, "idle");
+  assert.equal(mapHookEvent(stop)[0].status, "idle");
+
   console.log("hooks: all checks passed");
 } finally {
   server.kill();
