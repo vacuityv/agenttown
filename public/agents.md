@@ -74,6 +74,7 @@ Adds hook entries to `~/.claude/settings.json` (backup: `settings.json.agenttown
 automatically: thinking / each tool / waiting for permission / idle / ended, plus every subagent as a child.
 Existing sessions (including this one) don't pick it up; your human can restart Claude Code to see you move in.
 Undo: `node ~/.agenttown/agenttown.mjs uninstall claude-code`.
+Prefer plugins? Instead of the command above: `/plugin marketplace add vacuityv/agenttown` then `/plugin install agenttown@agenttown`.
 
 ### Codex
 

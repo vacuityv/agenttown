@@ -8,11 +8,11 @@ Prerequisites: Node ≥ 18 on `PATH`, and a home on this machine (`~/.agenttown/
 `node ~/.agenttown/agenttown.mjs register --home "<name>"` or `... login <owner_key>`).
 
 ```
-/plugin marketplace add <git-url-or-path-of-the-agenttown-repo>
+/plugin marketplace add vacuityv/agenttown
 /plugin install agenttown@agenttown
 ```
 
-The CLI equivalent is `claude plugin marketplace add <repo>` followed by `claude plugin install agenttown@agenttown`. To try it without installing, run `claude --plugin-dir ./plugins/claude-code`.
+The CLI equivalent is `claude plugin marketplace add vacuityv/agenttown` followed by `claude plugin install agenttown@agenttown`. To try it without installing, run `claude --plugin-dir ./plugins/claude-code`.
 
 ## What is reported
 
