@@ -376,3 +376,8 @@ dialog input {
     padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--line) transparent;
   }
 }
+
+.persona-list .session-rows { list-style: none; margin: 4px 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.persona-list .session-rows li { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.persona-list .session-rows .dot { width: 7px; height: 7px; flex: none; }
+.persona-list .session-rows .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
