@@ -366,3 +366,13 @@ dialog input {
   .header-actions .nav-feedback { display: none; } /* the footer link covers phones */
   .site-footer .footer-feedback { margin-left: 0; }
 }
+
+/* Desktop: the side column never makes the page taller than the room — it is capped at the viewport and scrolls inside. */
+@media (min-width: 961px) {
+  .home-page { align-items: start; }
+  .home-page > .side {
+    position: sticky; top: 12px; align-self: start;
+    max-height: calc(100dvh - 110px); overflow-y: auto; overscroll-behavior: contain;
+    padding-right: 4px; scrollbar-width: thin; scrollbar-color: var(--line) transparent;
+  }
+}
