@@ -5,13 +5,12 @@
 // river). Terrain (grass tones, flowers, tall grass, rocks, tree clusters) comes from value noise.
 //
 // Rendering is split into invisible 256 px chunks purely for caching — nothing in the art follows them.
-import { PAL } from "./art.js";
 import { planFor, season, onDwellingChange } from "./interior.js";
-import { hash32, rng, offscreen } from "./util.js";
+import { hash32, rng } from "./util.js";
 
 const GOLDEN = Math.PI * (3 - Math.sqrt(5));
 const SPACING = 124;
-export const CHUNK = 256;
+export const CHUNK_PX = 512; // device px per cached terrain tile (tiles are invisible; just a cache)
 const BUCKET = 512;
 
 // ---------- deterministic noise ----------
@@ -158,29 +157,49 @@ const groundCache = new Map();
 export function invalidateAll() { chunkCache.clear(); groundCache.clear(); layoutCache.clear(); edgeCache.clear(); }
 onDwellingChange(() => invalidateAll());
 
-// ---------- terrain chunks ----------
-function R(c, x, y, w, h, col) { c.fillStyle = col; c.fillRect(x, y, w, h); }
+// ---------- neutral, soft vector environment ----------
+// The shared world (ground, river, paths, trees, plazas, cemetery) is drawn as smooth vector shapes in a calm
+// warm night palette, rendered at device resolution and cached per (tile, scale). Homes bring their own style.
 
 function palette() {
   const sz = season();
-  if (sz === "winter") return { g: ["#2a3f45", "#33494f", "#22363a", "#3a5258"], fl: ["#e8eef5", "#cfd8e0"], leaf: ["#2f4f45", "#e8eef5", "#22392f"] };
-  if (sz === "autumn" || sz === "halloween") return { g: ["#2a3a2c", "#324230", "#233226", "#3a4632"], fl: ["#e8913a", "#c9503a"], leaf: ["#c9632a", "#e08a3a", "#8a3f22"] };
-  if (sz === "spring") return { g: [PAL.grass, PAL.grass2, PAL.grass3, "#2a4f3f"], fl: [PAL.flower, "#f7f1e3"], leaf: ["#3f8a5a", "#f2b8c8", "#2a5e40"] };
-  return { g: [PAL.grass, PAL.grass2, PAL.grass3, "#2a4f3f"], fl: [PAL.flower, PAL.flower2], leaf: ["#2a6a48", "#3f8a5a", "#1c4a34"] };
+  const base = { ground: "#21312b", ground2: "#26382f", ground3: "#1c2b25", path: "#7d6a52", pathHi: "#93805f", stone: "#8c8794", water: "#2a4864", waterHi: "rgba(170,205,235,0.22)", bank: "#3a3a2e" };
+  if (sz === "winter") return { ...base, ground: "#2b3b40", ground2: "#33454a", ground3: "#24333a", leaf: ["#3f5a50", "#5b766a"], fl: ["#e8eef5", "#cfd8e0"] };
+  if (sz === "autumn" || sz === "halloween") return { ...base, leaf: ["#a8552c", "#d0803d", "#7a3a22"], fl: ["#e8a050", "#d0603a"] };
+  if (sz === "spring") return { ...base, leaf: ["#3a6e52", "#e9b3c4", "#2c5a42"], fl: ["#f0b8c8", "#f7f1e3"] };
+  return { ...base, leaf: ["#335f48", "#4a7c5e", "#284c3a"], fl: ["#e8a0b4", "#f2d27a"] };
 }
 
-export function tree(c, x, y, r, pal = palette()) {
-  const leaf = pal.leaf;
-  if (r() < 0.3) { // conifer
-    R(c, x + 5, y + 13, 2, 4, PAL.trunk);
-    for (let i = 0; i < 4; i++) { const w = 3 + i * 2; R(c, x + 6 - (w >> 1) - 1, y + i * 3, w + 2, 4, PAL.outline); R(c, x + 6 - (w >> 1), y + 1 + i * 3, w, 3, i % 2 ? leaf[2] : leaf[0]); }
+// soft vector tree (x,y = top-left of a ~16 x 18 box in world px)
+export function tree(c, x, y, r, pal = palette(), size = 1) {
+  const cx = x + 7 * size, cy = y + 7 * size, R0 = 7 * size;
+  c.fillStyle = "rgba(0,0,0,0.22)"; c.beginPath(); c.ellipse(cx + 2 * size, y + 16 * size, R0 * 0.9, R0 * 0.35, 0, 0, 7); c.fill();
+  if (r() < 0.28) { // conifer
+    c.fillStyle = "#4a3a2e"; c.fillRect(cx - 0.8 * size, y + 12 * size, 1.6 * size, 4 * size);
+    for (let i = 0; i < 3; i++) {
+      c.fillStyle = i % 2 ? pal.leaf[0] : pal.leaf[2] ?? pal.leaf[0];
+      c.beginPath(); c.moveTo(cx, y + i * 3.5 * size); c.lineTo(cx + (4 + i * 2) * size, y + (6 + i * 3.5) * size); c.lineTo(cx - (4 + i * 2) * size, y + (6 + i * 3.5) * size); c.closePath(); c.fill();
+    }
     return;
   }
-  R(c, x + 5, y + 11, 3, 6, PAL.trunk);
-  R(c, x, y + 2, 13, 10, PAL.outline); R(c, x + 2, y, 9, 14, PAL.outline);
-  R(c, x + 1, y + 3, 11, 8, leaf[0]); R(c, x + 3, y + 1, 7, 12, leaf[0]);
-  R(c, x + 3, y + 2, 4, 3, leaf[1]); R(c, x + 8, y + 9, 2, 2, leaf[2]);
+  c.fillStyle = "#4a3a2e"; c.fillRect(cx - 1 * size, y + 10 * size, 2 * size, 6 * size);
+  const g = c.createRadialGradient(cx - 2 * size, cy - 3 * size, 1, cx, cy, R0 * 1.2);
+  g.addColorStop(0, pal.leaf[1]); g.addColorStop(1, pal.leaf[0]);
+  c.fillStyle = g;
+  for (const [dx, dy, rr] of [[0, 0, 1], [-3.5, 2, 0.7], [3.5, 2, 0.72], [0, -3, 0.7]]) { c.beginPath(); c.arc(cx + dx * size, cy + dy * size, R0 * rr, 0, 7); c.fill(); }
 }
+function bush(c, x, y, r, pal) {
+  c.fillStyle = "rgba(0,0,0,0.18)"; c.beginPath(); c.ellipse(x + 4, y + 5, 4.5, 1.6, 0, 0, 7); c.fill();
+  c.fillStyle = pal.leaf[0];
+  for (const [dx, dy, rr] of [[2, 3, 2.6], [5, 3, 2.4], [3.5, 1.5, 2.4]]) { c.beginPath(); c.arc(x + dx, y + dy, rr, 0, 7); c.fill(); }
+  if (r() < 0.5) { c.fillStyle = pal.fl[0]; c.beginPath(); c.arc(x + 4, y + 2, 0.7, 0, 7); c.fill(); }
+}
+function rock(c, x, y) {
+  const g = c.createLinearGradient(x, y, x, y + 4); g.addColorStop(0, "#9a95a3"); g.addColorStop(1, "#5e5a68");
+  c.fillStyle = g; c.beginPath(); c.ellipse(x + 3, y + 2, 3, 2, 0, 0, 7); c.fill();
+}
+function flowers(c, x, y, r, pal) { for (let i = 0; i < 5; i++) { c.fillStyle = pal.fl[i % 2]; c.beginPath(); c.arc(x + r() * 8, y + r() * 6, 0.6, 0, 7); c.fill(); } }
+function grass(c, x, y) { c.strokeStyle = "rgba(90,130,100,0.6)"; c.lineWidth = 0.6; c.beginPath(); for (const dx of [0, 2, 4]) { c.moveTo(x + dx, y + 4); c.quadraticCurveTo(x + dx - 0.5, y + 1, x + dx + 0.8, y - 1); } c.stroke(); }
 
 function blocked(x, y, homes, paths, margin) {
   if (Math.abs(y - riverY(x)) < RIVER_W + 6 + margin) return true;
@@ -190,64 +209,89 @@ function blocked(x, y, homes, paths, margin) {
   return false;
 }
 let _features = [];
-export function setFeatures(list) { _features = list; }
+export function setFeatures(list) { _features = list; chunkCache.clear(); }
 
-export function chunkImage(ix, iy) {
+const tileWorld = (s) => CHUNK_PX / s;
+export const tileSize = tileWorld;
+
+function newCanvas(w, h) { const c = document.createElement("canvas"); c.width = Math.max(1, Math.ceil(w)); c.height = Math.max(1, Math.ceil(h)); return [c, c.getContext("2d")]; }
+
+// One terrain tile at scale s (device px per world px). Returns a CHUNK_PX² canvas.
+export function chunkImage(ix, iy, s) {
   const n = countHomes();
-  const key = `${ix},${iy}|${n}|${season()}`;
+  const key = `${ix},${iy}|${s}|${n}|${season()}`;
   let img = chunkCache.get(key);
   if (img) { chunkCache.delete(key); chunkCache.set(key, img); return img; }
-  const [cv, c] = offscreen(CHUNK, CHUNK);
-  const X = ix * CHUNK, Y = iy * CHUNK;
+  const TW = tileWorld(s);
+  const X = ix * TW, Y = iy * TW;
+  const [cv, c] = newCanvas(CHUNK_PX, CHUNK_PX);
+  c.setTransform(s, 0, 0, s, -X * s, -Y * s);
   const pal = palette();
-  // grass tones from noise
-  for (let y = 0; y < CHUNK; y += 4) for (let x = 0; x < CHUNK; x += 4) {
-    const v = vnoise(X + x, Y + y, 90) * 0.7 + vnoise(X + x, Y + y, 23, 1) * 0.3;
-    R(c, x, y, 4, 4, v < 0.33 ? pal.g[2] : v < 0.55 ? pal.g[0] : v < 0.75 ? pal.g[1] : pal.g[3]);
+  c.fillStyle = pal.ground; c.fillRect(X, Y, TW, TW);
+  // soft tonal patches (fixed world cells, so tiles at any scale agree)
+  const G = 96;
+  for (let gy = Math.floor((Y - G) / G); gy <= Math.floor((Y + TW + G) / G); gy++) for (let gx = Math.floor((X - G) / G); gx <= Math.floor((X + TW + G) / G); gx++) {
+    const v = vnoise(gx * G, gy * G, 300, 3);
+    const px = gx * G + h2(gx, gy, 9) * G, py = gy * G + h2(gx, gy, 10) * G, rr = 50 + h2(gx, gy, 11) * 60;
+    const col = v > 0.55 ? "rgba(52,74,60,0.35)" : v < 0.4 ? "rgba(16,26,22,0.35)" : "rgba(40,58,48,0.25)";
+    const g = c.createRadialGradient(px, py, 0, px, py, rr); g.addColorStop(0, col); g.addColorStop(1, "rgba(0,0,0,0)");
+    c.fillStyle = g; c.fillRect(px - rr, py - rr, rr * 2, rr * 2);
   }
-  const r = rng(hash32(`chunk${ix},${iy}`));
-  for (let i = 0; i < 500; i++) R(c, (r() * CHUNK) | 0, (r() * CHUNK) | 0, 1, 1, r() < 0.5 ? pal.g[1] : pal.g[2]);
   // river
-  for (let x = 0; x < CHUNK; x++) {
-    const yc = riverY(X + x) - Y;
-    if (yc < -RIVER_W - 6 || yc > CHUNK + RIVER_W + 6) continue;
-    R(c, x, Math.round(yc - RIVER_W - 3), 1, 3, "#5a4a3a");
-    R(c, x, Math.round(yc + RIVER_W), 1, 3, "#5a4a3a");
-    R(c, x, Math.round(yc - RIVER_W), 1, RIVER_W * 2, "#2f5a86");
-    if ((X + x) % 9 < 3) R(c, x, Math.round(yc - 4 + 3 * Math.sin((X + x) / 13)), 1, 1, "#7fb2e6");
-    if ((X + x) % 13 === 0) R(c, x, Math.round(yc + 6), 2, 1, "#5f8fc0");
-  }
-  const homes = homesIn(X, Y, X + CHUNK, Y + CHUNK, n, 160).map(homeLayout);
-  const paths = pathsIn(X, Y, X + CHUNK, Y + CHUNK, n);
-  // footpaths (with bridges where they cross the river)
+  c.lineCap = "round"; c.lineJoin = "round";
+  const riv = () => { c.beginPath(); for (let x = X - 40; x <= X + TW + 40; x += 6) { const y = riverY(x); x === X - 40 ? c.moveTo(x, y) : c.lineTo(x, y); } };
+  riv(); c.strokeStyle = pal.bank; c.lineWidth = RIVER_W * 2 + 8; c.stroke();
+  riv(); c.strokeStyle = pal.water; c.lineWidth = RIVER_W * 2; c.stroke();
+  riv(); c.strokeStyle = "rgba(60,100,140,0.5)"; c.lineWidth = RIVER_W; c.stroke();
+  c.strokeStyle = pal.waterHi; c.lineWidth = 0.8;
+  for (let x = Math.floor((X - 20) / 23) * 23; x <= X + TW; x += 23) { const y = riverY(x) + ((hash32("w" + x) % 15) - 7); c.beginPath(); c.moveTo(x, y); c.quadraticCurveTo(x + 4, y - 1.5, x + 8, y); c.stroke(); }
+  const homes = homesIn(X, Y, X + TW, Y + TW, n, 160).map(homeLayout);
+  const paths = pathsIn(X, Y, X + TW, Y + TW, n);
+  // footpaths
   for (const p of paths) {
-    const steps = 80;
-    for (let i = 0; i <= steps; i++) {
-      const [px, py] = qpt(p.c, i / steps);
-      const x = Math.round(px - X), y = Math.round(py - Y);
-      if (x < -6 || y < -6 || x > CHUNK + 6 || y > CHUNK + 6) continue;
-      const onWater = Math.abs(py - riverY(px)) < RIVER_W + 3;
-      if (onWater) { R(c, x - 4, y - 3, 8, 6, PAL.outline); R(c, x - 3, y - 2, 6, 4, "#9a6e48"); R(c, x - 3, y, 6, 1, "#7a5035"); continue; }
-      if (p.style === 0) R(c, x - 2, y - 2, 5, 5, "#6e5a44");
-      else if (p.style === 1) { if (i % 3 === 0) { R(c, x - 2, y - 1, 4, 3, "#8a8494"); R(c, x - 2, y - 1, 4, 1, "#a7a3ad"); } }
-      else { R(c, x - 2, y - 2, 5, 4, "#7a6a50"); if (i % 2) R(c, x, y, 1, 1, "#8a7a60"); }
+    const [x0, y0, cx, cy, x1, y1] = p.c;
+    const curve = () => { c.beginPath(); c.moveTo(x0, y0); c.quadraticCurveTo(cx, cy, x1, y1); };
+    if (p.style === 1) { // stepping stones
+      for (let i = 0; i <= 40; i++) { const [px, py] = qpt(p.c, i / 40); if (i % 2) continue; c.fillStyle = pal.stone; c.beginPath(); c.ellipse(px, py, 2.2, 1.6, i, 0, 7); c.fill(); }
+    } else {
+      curve(); c.strokeStyle = "rgba(0,0,0,0.18)"; c.lineWidth = 7; c.stroke();
+      curve(); c.strokeStyle = p.style === 0 ? pal.path : "#857a68"; c.lineWidth = 5.5; c.stroke();
+      curve(); c.strokeStyle = p.style === 0 ? "rgba(160,140,105,0.35)" : "rgba(170,160,140,0.3)"; c.lineWidth = 2; c.stroke();
+    }
+    // bridges where the path crosses water
+    for (let i = 1; i < 60; i++) {
+      const [px, py] = qpt(p.c, i / 60);
+      if (Math.abs(py - riverY(px)) < 3) {
+        const [ax, ay] = qpt(p.c, (i - 1) / 60), [bx, by] = qpt(p.c, (i + 1) / 60);
+        const ang = Math.atan2(by - ay, bx - ax);
+        c.save(); c.translate(px, py); c.rotate(ang);
+        c.fillStyle = "rgba(0,0,0,0.25)"; c.fillRect(-RIVER_W - 6, -4, RIVER_W * 2 + 12, 9);
+        c.fillStyle = "#8a6a4a"; c.fillRect(-RIVER_W - 5, -4.5, RIVER_W * 2 + 10, 8);
+        c.strokeStyle = "rgba(60,40,30,0.6)"; c.lineWidth = 0.5;
+        for (let k = -RIVER_W - 4; k < RIVER_W + 5; k += 2.5) { c.beginPath(); c.moveTo(k, -4.5); c.lineTo(k, 3.5); c.stroke(); }
+        c.fillStyle = "#5a4232"; c.fillRect(-RIVER_W - 5, -5.5, RIVER_W * 2 + 10, 1); c.fillRect(-RIVER_W - 5, 3.5, RIVER_W * 2 + 10, 1);
+        c.restore();
+        break;
+      }
     }
   }
-  // flora scattered by noise: tree clusters where the "forest" noise is high, flowers in meadows
-  const items = 90;
-  for (let i = 0; i < items; i++) {
-    const x = (r() * CHUNK) | 0, y = (r() * CHUNK) | 0;
-    const wx = X + x, wy = Y + y;
-    const forest = vnoise(wx, wy, 300, 7);
-    const roll = r();
-    if (forest > 0.62 && roll < 0.45) { if (!blocked(wx + 6, wy + 10, homes, paths, 8)) tree(c, x, y, r, pal); }
-    else if (roll < 0.62) { if (!blocked(wx, wy, homes, paths, 2)) { for (let k = 0; k < 5; k++) R(c, x + ((r() * 8) | 0), y + ((r() * 6) | 0), 1, 1, pal.fl[k % 2]); } }
-    else if (roll < 0.78) { if (!blocked(wx, wy, homes, paths, 2)) { R(c, x, y, 1, 3, pal.g[3]); R(c, x + 2, y - 1, 1, 4, pal.g[3]); R(c, x + 4, y, 1, 3, pal.g[3]); } } // tall grass
-    else if (roll < 0.84) { if (!blocked(wx, wy, homes, paths, 3)) { R(c, x, y, 5, 3, "#6e6878"); R(c, x + 1, y, 2, 1, "#8a8494"); } }
-    else if (roll < 0.9 && forest > 0.45) { if (!blocked(wx, wy, homes, paths, 4)) { R(c, x, y, 7, 5, PAL.outline); R(c, x + 1, y + 1, 5, 3, "#3f8a5a"); } }
+  // flora in fixed world cells
+  const C = 48;
+  for (let gy = Math.floor((Y - 20) / C); gy <= Math.floor((Y + TW) / C); gy++) for (let gx = Math.floor((X - 20) / C); gx <= Math.floor((X + TW) / C); gx++) {
+    const r = rng(hash32(`flora${gx},${gy}`));
+    const count = 2;
+    for (let i = 0; i < count; i++) {
+      const x = gx * C + r() * C, y = gy * C + r() * C;
+      const forest = vnoise(x, y, 300, 7), roll = r();
+      if (forest > 0.62 && roll < 0.55) { if (!blocked(x + 7, y + 12, homes, paths, 8)) tree(c, x, y, r, pal, 0.9 + r() * 0.5); }
+      else if (roll < 0.5) { if (!blocked(x, y, homes, paths, 2)) flowers(c, x, y, r, pal); }
+      else if (roll < 0.72) { if (!blocked(x, y, homes, paths, 2)) grass(c, x, y); }
+      else if (roll < 0.8) { if (!blocked(x, y, homes, paths, 3)) rock(c, x, y); }
+      else if (roll < 0.9 && forest > 0.45) { if (!blocked(x, y, homes, paths, 4)) bush(c, x, y, r, pal); }
+    }
   }
   chunkCache.set(key, cv);
-  if (chunkCache.size > 220) chunkCache.delete(chunkCache.keys().next().value);
+  if (chunkCache.size > 70) chunkCache.delete(chunkCache.keys().next().value);
   return cv;
 }
 
@@ -269,156 +313,161 @@ export function inPoly(pts, x, y) {
   }
   return inside;
 }
+const polyPath = (c, pts) => { c.beginPath(); pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.closePath(); };
 
-// Garden image around a home: { img, x, y } in world px.
-export function homeGround(k) {
+// Garden around a home, drawn at scale s: { img, x, y (world), poly }.
+export function homeGround(k, s) {
   const l = homeLayout(k);
-  const key = `${k}|${l.id}|${season()}`;
+  const key = `${k}|${l.id}|${season()}|${s}`;
   let g = groundCache.get(key);
-  if (g) return g;
+  if (g) { groundCache.delete(key); groundCache.set(key, g); return g; }
   const pad = 8;
-  const W = Math.ceil(l.rx * 2 * 1.15 + pad * 2), H = Math.ceil(l.ry * 2 * 1.15 + pad * 2);
-  const [cv, c] = offscreen(W, H);
+  const W = l.rx * 2 * 1.15 + pad * 2, H = l.ry * 2 * 1.15 + pad * 2;
   const gx = Math.round(l.cx - W / 2), gy = Math.round(l.cy - H / 2);
+  const [cv, c] = newCanvas(W * s, H * s);
+  c.scale(s, s);
+  c.lineCap = "round"; c.lineJoin = "round";
   const r = rng(hash32(`garden${l.id ?? k}`));
   const pal = palette();
   const seed = (hash32(`g${k}`) % 1000) / 100;
   const poly = blobPoly(W / 2, H / 2, l.rx, l.ry, seed);
-  const style = r();
   const plan = l.plan;
-  // lawn
-  c.beginPath(); poly.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.closePath();
-  c.fillStyle = plan.kind === "camp" ? pal.g[2] : pal.g[3];
-  c.fill();
-  c.save(); c.clip();
-  for (let i = 0; i < 220; i++) R(c, (r() * W) | 0, (r() * H) | 0, 1, 1, r() < 0.5 ? pal.g[0] : pal.g[1]);
-  c.restore();
-  // fence / hedge following the blob (with a gap at the path)
+  // lawn with a soft edge
+  polyPath(c, poly);
+  const lg = c.createRadialGradient(W / 2, H / 2, 10, W / 2, H / 2, Math.max(l.rx, l.ry) * 1.1);
+  lg.addColorStop(0, "#2f4a3c"); lg.addColorStop(1, "#273e32");
+  c.fillStyle = lg; c.fill();
+  c.strokeStyle = "rgba(20,30,25,0.5)"; c.lineWidth = 1.2; c.stroke();
   const doorL = [l.door[0] - gx, l.door[1] - gy];
   const nearDoor = (x, y) => Math.abs(x - doorL[0]) < 8 && y > doorL[1];
-  if (plan.kind === "house" || plan.kind === "greenhouse") {
+  const fence = r();
+  if (fence < 0.75) {
     for (let i = 0; i < poly.length; i++) {
       const [x0, y0] = poly[i], [x1, y1] = poly[(i + 1) % poly.length];
       const len = Math.hypot(x1 - x0, y1 - y0);
-      for (let t = 0; t < len; t += style < 0.4 ? 3 : 4) {
-        const x = Math.round(x0 + ((x1 - x0) * t) / len), y = Math.round(y0 + ((y1 - y0) * t) / len);
+      for (let t = 0; t < len; t += fence < 0.35 ? 3 : 4.5) {
+        const x = x0 + ((x1 - x0) * t) / len, y = y0 + ((y1 - y0) * t) / len;
         if (nearDoor(x, y)) continue;
-        if (style < 0.4) R(c, x, y - 2, 1, 3, "#efe6d4");
-        else if (style < 0.7) { R(c, x - 1, y - 2, 4, 4, PAL.outline); R(c, x, y - 1, 2, 2, "#3f7a4a"); }
-        else if (style < 0.85) R(c, x, y, 3, 2, "#8a8494");
+        if (fence < 0.35) { c.strokeStyle = "rgba(236,226,206,0.85)"; c.lineWidth = 0.8; c.beginPath(); c.moveTo(x, y + 1); c.lineTo(x, y - 2.2); c.stroke(); }
+        else if (fence < 0.6) { c.fillStyle = "#2f5a40"; c.beginPath(); c.arc(x, y, 2.4, 0, 7); c.fill(); }
+        else { c.fillStyle = "#7f7a88"; c.beginPath(); c.ellipse(x, y, 1.8, 1.2, 0, 0, 7); c.fill(); }
       }
     }
+    if (fence < 0.35) { polyPath(c, poly); c.strokeStyle = "rgba(220,210,190,0.45)"; c.lineWidth = 0.5; c.stroke(); }
   }
-  // garden path from the door to the blob edge
-  for (let y = doorL[1]; y < H - 2; y++) { if (!inPoly(poly, doorL[0], y)) break; R(c, Math.round(doorL[0] - 3 + Math.sin(y / 6) * 1.5), y, 6, 1, "#6e5a44"); }
-  // garden items in the blob but outside the building
+  // garden path from the door to the edge of the garden
+  c.beginPath(); c.moveTo(doorL[0], doorL[1]);
+  let ey = doorL[1]; while (ey < H && inPoly(poly, doorL[0], ey)) ey += 1;
+  c.quadraticCurveTo(doorL[0] + (r() - 0.5) * 10, (doorL[1] + ey) / 2, doorL[0] + (r() - 0.5) * 4, ey + 2);
+  c.strokeStyle = pal.path; c.lineWidth = 5; c.stroke();
+  // items placed in the garden, outside the building
   const ex = plan.ext;
-  const bx0 = l.ox + ex.x0 - gx - 3, by0 = l.oy + ex.y0 - gy - 3, bx1 = l.ox + ex.x1 - gx + 3, by1 = l.oy + ex.y1 - gy + 3;
-  const taken = [[bx0, by0, bx1, by1], [doorL[0] - 6, doorL[1], doorL[0] + 6, H]];
+  const taken = [[l.ox + ex.x0 - gx - 3, l.oy + ex.y0 - gy - 3, l.ox + ex.x1 - gx + 3, l.oy + ex.y1 - gy + 3], [doorL[0] - 6, doorL[1], doorL[0] + 6, H]];
   const fits = (x, y, w, h) => inPoly(poly, x, y) && inPoly(poly, x + w, y + h) && inPoly(poly, x + w, y) && inPoly(poly, x, y + h) &&
     !taken.some(([a, b, c2, d]) => x < c2 && x + w > a && y < d && y + h > b);
   const sz = season();
   const want = ["tree", "bush", "bush", "bed", "tree", r() < 0.35 ? "pond" : "veg", r() < 0.3 ? "well" : "rock", sz === "halloween" ? "pumpkins" : sz === "winter" ? "snowman" : "bush", "bush", "bed"];
-  const size = { tree: [13, 17], bush: [7, 5], bed: [12, 5], pond: [16, 10], veg: [14, 8], well: [9, 10], rock: [5, 3], pumpkins: [10, 4], snowman: [7, 10] };
+  const size = { tree: [14, 17], bush: [8, 6], bed: [12, 5], pond: [16, 10], veg: [14, 8], well: [9, 9], rock: [6, 4], pumpkins: [10, 4], snowman: [7, 10] };
   for (const it of want) {
     const [w, h] = size[it];
     for (let tries = 0; tries < 30; tries++) {
-      const x = (r() * (W - w)) | 0, y = (r() * (H - h)) | 0;
+      const x = r() * (W - w), y = r() * (H - h);
       if (!fits(x, y, w, h)) continue;
       taken.push([x - 1, y - 1, x + w + 1, y + h + 1]);
       if (it === "tree") tree(c, x, y, r, pal);
-      else if (it === "bush") { R(c, x, y, 7, 5, PAL.outline); R(c, x + 1, y + 1, 5, 3, r() < 0.5 ? "#3f8a5a" : "#4f9a5c"); if (r() < 0.5) R(c, x + 2, y + 1, 1, 1, pal.fl[0]); }
-      else if (it === "bed") { R(c, x, y, w, h, "#5a3a2a"); for (let i = 1; i < w - 1; i += 2) R(c, x + i, y + 1 + (i % 4 ? 0 : 2), 1, 1, [PAL.flower, PAL.flower2, "#9d6bd8", "#f7f1e3"][(i >> 1) % 4]); }
-      else if (it === "pond") { c.fillStyle = PAL.outline; c.beginPath(); c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, 7); c.fill(); c.fillStyle = "#3f6c9a"; c.beginPath(); c.ellipse(x + w / 2, y + h / 2, w / 2 - 1, h / 2 - 1, 0, 0, 7); c.fill(); R(c, x + 4, y + 3, 3, 1, "#7fb2e6"); R(c, x + w - 6, y + h - 4, 3, 2, "#4f9a5c"); }
-      else if (it === "veg") { R(c, x, y, w, h, "#5a3a2a"); for (let yy = 1; yy < h; yy += 3) for (let xx = 1; xx < w; xx += 3) R(c, x + xx, y + yy, 2, 1, sz === "autumn" || sz === "halloween" ? "#e8913a" : "#6ab874"); }
-      else if (it === "well") { R(c, x, y + 3, 9, 7, PAL.outline); R(c, x + 1, y + 4, 7, 5, "#8a8494"); R(c, x + 2, y + 5, 5, 3, "#1b2350"); R(c, x, y, 9, 2, "#8a4a36"); }
-      else if (it === "rock") { R(c, x, y, 5, 3, "#6e6878"); R(c, x + 1, y, 2, 1, "#8a8494"); }
-      else if (it === "pumpkins") { for (let i = 0; i < 3; i++) { R(c, x + i * 3, y + 1, 3, 3, "#e8732a"); R(c, x + i * 3 + 1, y, 1, 1, "#4f9a5c"); } }
-      else if (it === "snowman") { R(c, x + 1, y + 4, 5, 5, "#f3f6fa"); R(c, x + 2, y, 3, 4, "#f3f6fa"); R(c, x + 4, y + 2, 2, 1, "#e8732a"); }
+      else if (it === "bush") bush(c, x, y, r, pal);
+      else if (it === "rock") rock(c, x, y);
+      else if (it === "bed") { c.fillStyle = "#4a3426"; c.beginPath(); c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, 7); c.fill(); for (let i = 0; i < 6; i++) { c.fillStyle = [pal.fl[0], pal.fl[1], "#b89ae8", "#f7f1e3"][i % 4]; c.beginPath(); c.arc(x + 2 + i * 1.6, y + 1.5 + (i % 2) * 2, 0.9, 0, 7); c.fill(); } }
+      else if (it === "pond") { c.fillStyle = "#3a3a2e"; c.beginPath(); c.ellipse(x + w / 2, y + h / 2, w / 2 + 1, h / 2 + 1, 0, 0, 7); c.fill(); const pg = c.createRadialGradient(x + w / 2 - 2, y + h / 2 - 2, 1, x + w / 2, y + h / 2, w / 2); pg.addColorStop(0, "#4f7aa0"); pg.addColorStop(1, "#2a4864"); c.fillStyle = pg; c.beginPath(); c.ellipse(x + w / 2, y + h / 2, w / 2, h / 2, 0, 0, 7); c.fill(); c.fillStyle = "#4f8a5c"; c.beginPath(); c.arc(x + w - 5, y + h - 4, 1.6, 0, 7); c.fill(); }
+      else if (it === "veg") { c.fillStyle = "#4a3426"; c.fillRect(x, y, w, h); for (let yy = 1.5; yy < h; yy += 3) for (let xx = 1.5; xx < w; xx += 3) { c.fillStyle = sz === "autumn" || sz === "halloween" ? "#d0803d" : "#6aa874"; c.beginPath(); c.arc(x + xx, y + yy, 0.9, 0, 7); c.fill(); } }
+      else if (it === "well") { c.fillStyle = "#7f7a88"; c.beginPath(); c.arc(x + 4.5, y + 5, 4.2, 0, 7); c.fill(); c.fillStyle = "#1b2840"; c.beginPath(); c.arc(x + 4.5, y + 5, 2.6, 0, 7); c.fill(); }
+      else if (it === "pumpkins") { for (let i = 0; i < 3; i++) { c.fillStyle = "#d9702a"; c.beginPath(); c.ellipse(x + 2 + i * 3.2, y + 2.5, 1.7, 1.4, 0, 0, 7); c.fill(); c.fillStyle = "#4f8a5c"; c.fillRect(x + 1.7 + i * 3.2, y + 0.4, 0.6, 0.9); } }
+      else if (it === "snowman") { c.fillStyle = "#f3f6fa"; c.beginPath(); c.arc(x + 3.5, y + 7, 3, 0, 7); c.fill(); c.beginPath(); c.arc(x + 3.5, y + 2.5, 2, 0, 7); c.fill(); }
       break;
     }
   }
-  // mailbox at the garden gate
-  { const mx = doorL[0] + 6, my = Math.min(H - 8, doorL[1] + 10); R(c, mx, my, 1, 5, PAL.trunk); R(c, mx - 1, my - 2, 4, 3, r() < 0.5 ? "#d9534f" : "#3d5a80"); }
-  g = { img: cv, x: gx, y: gy, poly: poly.map(([x, y]) => [x + gx, y + gy]) };
+  // mailbox at the gate
+  { const mx = doorL[0] + 7, my = Math.min(H - 8, doorL[1] + 10); c.fillStyle = "#4a3a2e"; c.fillRect(mx, my, 0.8, 4); c.fillStyle = r() < 0.5 ? "#c85a4a" : "#4a6a9a"; c.fillRect(mx - 1.2, my - 2, 3.2, 2.2); }
+  g = { img: cv, x: gx, y: gy, w: W, h: H, poly: poly.map(([x, y]) => [x + gx, y + gy]) };
   groundCache.set(key, g);
-  if (groundCache.size > 500) groundCache.delete(groundCache.keys().next().value);
+  if (groundCache.size > 90) groundCache.delete(groundCache.keys().next().value);
   return g;
 }
 
 // ---------- features ----------
 const featCache = new Map();
-export function featureImage(f, graves = 0) {
-  const key = `${f.slot}|${f.kind}|${season()}|${f.kind === "cemetery" ? Math.ceil(graves / 8) : 0}`;
+const FEAT = 168;
+export function featureImage(f, graves, s) {
+  const key = `${f.slot}|${f.kind}|${season()}|${f.kind === "cemetery" ? Math.ceil(graves / 8) : 0}|${s}`;
   let img = featCache.get(key);
   if (img) return img;
-  const S = 168;
-  const [cv, c] = offscreen(S, S);
-  const m = S / 2;
+  const [cv, c] = newCanvas(FEAT * s, FEAT * s);
+  c.scale(s, s);
+  c.lineCap = "round"; c.lineJoin = "round";
+  const m = FEAT / 2;
   const r = rng(hash32("feat" + f.slot));
   const pal = palette();
-  const poly = blobPoly(m, m, 66, 58, f.slot % 7, 26, 0.1);
-  const fillPoly = (pts, col) => { c.fillStyle = col; c.beginPath(); pts.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.closePath(); c.fill(); };
   if (f.kind === "plaza") {
-    fillPoly(blobPoly(m, m, 52, 44, f.slot, 22, 0.08), "#5a5468");
-    for (let y = m - 44; y < m + 44; y += 3) for (let x = m - 54; x < m + 54; x += 4) {
-      if (((x - m) / 52) ** 2 + ((y - m) / 44) ** 2 > 0.92) continue;
-      R(c, x + ((y / 3) % 2 ? 2 : 0), y, 3, 2, r() < 0.5 ? "#7a7484" : "#86808f");
-    }
-    c.fillStyle = PAL.outline; c.beginPath(); c.ellipse(m, m, 13, 10, 0, 0, 7); c.fill();
-    c.fillStyle = "#a7a3ad"; c.beginPath(); c.ellipse(m, m, 12, 9, 0, 0, 7); c.fill();
-    c.fillStyle = "#3f6c9a"; c.beginPath(); c.ellipse(m, m, 9, 6.5, 0, 0, 7); c.fill();
-    R(c, m - 1, m - 4, 2, 5, "#cfe6ff");
-    for (const [x, y] of [[m - 36, m - 4], [m + 26, m - 2]]) { R(c, x, y, 10, 4, PAL.outline); R(c, x + 1, y + 1, 8, 2, "#9a6e48"); }
-    for (const [x, y] of [[m - 40, m - 28], [m + 38, m - 26], [m - 34, m + 28]]) { R(c, x, y, 2, 8, PAL.outline); R(c, x - 1, y - 2, 4, 3, PAL.lamp); }
-    R(c, m - 6, m + 26, 12, 8, PAL.outline); R(c, m - 5, m + 27, 10, 6, "#9a6e48"); R(c, m - 4, m + 28, 3, 2, "#f3e9d2"); R(c, m + 1, m + 29, 3, 2, "#f2cc8f");
+    const p = blobPoly(m, m, 52, 44, f.slot, 28, 0.06);
+    polyPath(c, p); const g = c.createRadialGradient(m, m, 6, m, m, 56); g.addColorStop(0, "#6f6878"); g.addColorStop(1, "#4f4a5a"); c.fillStyle = g; c.fill();
+    c.strokeStyle = "rgba(255,255,255,0.06)"; c.lineWidth = 0.6;
+    for (let rr = 14; rr < 50; rr += 6) { c.beginPath(); c.ellipse(m, m, rr, rr * 0.85, 0, 0, 7); c.stroke(); }
+    c.fillStyle = "#8a8494"; c.beginPath(); c.ellipse(m, m, 13, 10, 0, 0, 7); c.fill();
+    const wg = c.createRadialGradient(m - 3, m - 2, 1, m, m, 10); wg.addColorStop(0, "#6f9cc4"); wg.addColorStop(1, "#2a4864");
+    c.fillStyle = wg; c.beginPath(); c.ellipse(m, m, 10, 7.5, 0, 0, 7); c.fill();
+    c.fillStyle = "rgba(220,235,255,0.7)"; c.beginPath(); c.arc(m, m - 1, 1.6, 0, 7); c.fill();
+    for (const [x, y] of [[m - 36, m - 2], [m + 26, m - 1]]) { c.fillStyle = "#7a5a40"; c.beginPath(); c.roundRect?.(x, y, 10, 3.5, 1.2); c.fill(); }
+    for (const [x, y] of [[m - 40, m - 28], [m + 38, m - 26], [m - 34, m + 28]]) lamp(c, x, y);
   } else if (f.kind === "pond") {
-    const p = blobPoly(m, m, 50, 36, f.slot, 24, 0.16);
-    fillPoly(blobPoly(m, m, 54, 40, f.slot, 24, 0.16), "#5a4a3a");
-    fillPoly(p, "#2f5a86");
-    for (let i = 0; i < 14; i++) { const x = m - 40 + r() * 80, y = m - 28 + r() * 56; if (inPoly(p, x, y)) R(c, x | 0, y | 0, 3, 1, "#5f8fc0"); }
-    for (let i = 0; i < 5; i++) { const x = m - 30 + r() * 60, y = m - 20 + r() * 40; if (inPoly(p, x, y)) { R(c, x | 0, y | 0, 4, 3, "#4f9a5c"); if (r() < 0.5) R(c, (x | 0) + 1, (y | 0), 1, 1, "#f2b8c8"); } }
-    R(c, m + 40, m + 10, 14, 4, PAL.outline); R(c, m + 41, m + 11, 12, 2, "#9a6e48"); // little jetty
+    const p = blobPoly(m, m, 50, 36, f.slot, 30, 0.16);
+    polyPath(c, blobPoly(m, m, 54, 40, f.slot, 30, 0.16)); c.fillStyle = "#3a3a2e"; c.fill();
+    polyPath(c, p); const g = c.createRadialGradient(m - 10, m - 8, 4, m, m, 52); g.addColorStop(0, "#4a7298"); g.addColorStop(1, "#24405c"); c.fillStyle = g; c.fill();
+    for (let i = 0; i < 6; i++) { const x = m - 30 + r() * 60, y = m - 20 + r() * 40; if (inPoly(p, x, y)) { c.fillStyle = "#4f8a5c"; c.beginPath(); c.arc(x, y, 2.4, 0.3, 6.1); c.lineTo(x, y); c.fill(); if (r() < 0.5) { c.fillStyle = "#f2b8c8"; c.beginPath(); c.arc(x + 0.6, y - 0.6, 0.8, 0, 7); c.fill(); } } }
+    c.fillStyle = "#7a5a40"; c.fillRect(m + 38, m + 9, 15, 3.5);
     tree(c, m - 66, m - 40, r, pal); tree(c, m + 46, m - 46, r, pal);
   } else if (f.kind === "grove" || f.kind === "orchard") {
     const n = f.kind === "grove" ? 12 : 9;
-    for (let i = 0; i < n; i++) {
-      const a = i * GOLDEN * 3 + f.slot, rr = 14 + 50 * Math.sqrt(i / n);
-      const x = m + Math.cos(a) * rr - 6, y = m + Math.sin(a) * rr * 0.8 - 8;
-      tree(c, x | 0, y | 0, r, f.kind === "orchard" ? { ...pal, leaf: [pal.leaf[0], "#e07a5f", pal.leaf[2]] } : pal);
-    }
+    const pl = f.kind === "orchard" ? { ...pal, leaf: [pal.leaf[0], "#c86a52", pal.leaf[2]] } : pal;
+    for (let i = 0; i < n; i++) { const a = i * GOLDEN * 3 + f.slot, rr = 14 + 50 * Math.sqrt(i / n); tree(c, m + Math.cos(a) * rr - 7, m + Math.sin(a) * rr * 0.8 - 9, r, pl, 1 + r() * 0.4); }
   } else if (f.kind === "meadow") {
-    for (let i = 0; i < 160; i++) { const x = m - 60 + r() * 120, y = m - 50 + r() * 100; if (inPoly(poly, x, y)) R(c, x | 0, y | 0, 1, 1, [pal.fl[0], pal.fl[1], "#f7f1e3", "#9d6bd8"][i % 4]); }
-    for (let i = 0; i < 6; i++) { const x = m - 40 + r() * 80, y = m - 30 + r() * 60; R(c, x | 0, y | 0, 1, 3, pal.g[3]); R(c, (x | 0) + 2, (y | 0) - 1, 1, 4, pal.g[3]); }
-    R(c, m - 5, m + 4, 10, 4, PAL.outline); R(c, m - 4, m + 5, 8, 2, "#9a6e48"); // a lone bench
+    const p = blobPoly(m, m, 62, 52, f.slot, 26, 0.1);
+    for (let i = 0; i < 220; i++) { const x = m - 60 + r() * 120, y = m - 50 + r() * 100; if (inPoly(p, x, y)) { c.fillStyle = [pal.fl[0], pal.fl[1], "#f7f1e3", "#b89ae8"][i % 4]; c.beginPath(); c.arc(x, y, 0.7, 0, 7); c.fill(); } }
+    for (let i = 0; i < 10; i++) grass(c, m - 40 + r() * 80, m - 30 + r() * 60);
+    c.fillStyle = "#7a5a40"; c.fillRect(m - 5, m + 4, 10, 3.5);
   } else if (f.kind === "well") {
-    R(c, m - 6, m - 3, 13, 11, PAL.outline); R(c, m - 5, m - 2, 11, 9, "#8a8494"); R(c, m - 3, m, 7, 5, "#1b2350");
-    R(c, m - 7, m - 9, 15, 3, "#8a4a36"); R(c, m - 6, m - 6, 1, 3, PAL.trunk); R(c, m + 6, m - 6, 1, 3, PAL.trunk);
+    c.fillStyle = "#7f7a88"; c.beginPath(); c.arc(m, m, 7, 0, 7); c.fill();
+    c.fillStyle = "#1b2840"; c.beginPath(); c.arc(m, m, 4.5, 0, 7); c.fill();
+    c.strokeStyle = "#7a5a40"; c.lineWidth = 1.5; c.beginPath(); c.moveTo(m - 8, m - 8); c.lineTo(m + 8, m - 8); c.stroke();
     tree(c, m - 40, m - 30, r, pal); tree(c, m + 28, m + 6, r, pal);
   } else if (f.kind === "cemetery") {
-    // free-form graveyard: mown grass inside a wobbly iron fence, a gate, lanterns, two old trees
     const rr = Math.min(70, 34 + Math.sqrt(Math.max(1, graves)) * 7);
-    const p = blobPoly(m, m, rr, rr * 0.82, f.slot, 30, 0.08);
-    fillPoly(p, "#22362c");
-    for (let i = 0; i < 120; i++) { const x = m - rr + r() * rr * 2, y = m - rr + r() * rr * 2; if (inPoly(p, x, y)) R(c, x | 0, y | 0, 1, 1, "#2a4234"); }
+    const p = blobPoly(m, m, rr, rr * 0.82, f.slot, 34, 0.08);
+    polyPath(c, p); const g = c.createRadialGradient(m, m, 6, m, m, rr); g.addColorStop(0, "#2b3f35"); g.addColorStop(1, "#22342b"); c.fillStyle = g; c.fill();
+    // wrought-iron fence: thin rail + posts, a gate at the bottom
+    c.strokeStyle = "rgba(30,26,40,0.9)"; c.lineWidth = 0.5; polyPath(c, p); c.stroke();
     for (let i = 0; i < p.length; i++) {
-      const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % p.length];
-      const len = Math.hypot(x1 - x0, y1 - y0);
-      for (let t = 0; t < len; t += 3) {
-        const x = Math.round(x0 + ((x1 - x0) * t) / len), y = Math.round(y0 + ((y1 - y0) * t) / len);
-        if (y > m && Math.abs(x - m) < 7) continue; // gate gap
-        R(c, x, y - 3, 1, 4, "#3a3448"); if (t % 6 === 0) R(c, x, y - 4, 1, 1, "#6e6878");
+      const [x0, y0] = p[i], [x1, y1] = p[(i + 1) % p.length], len = Math.hypot(x1 - x0, y1 - y0);
+      for (let t = 0; t < len; t += 2.6) {
+        const x = x0 + ((x1 - x0) * t) / len, y = y0 + ((y1 - y0) * t) / len;
+        if (y > m && Math.abs(x - m) < 7) continue;
+        c.strokeStyle = "rgba(30,26,40,0.9)"; c.lineWidth = 0.45; c.beginPath(); c.moveTo(x, y + 0.6); c.lineTo(x, y - 3); c.stroke();
       }
     }
-    R(c, m - 8, m + rr * 0.82 - 6, 1, 8, "#3a3448"); R(c, m + 7, m + rr * 0.82 - 6, 1, 8, "#3a3448"); R(c, m - 8, m + rr * 0.82 - 7, 16, 1, "#3a3448");
-    for (const [x, y] of [[m - rr + 6, m + 8], [m + rr - 8, m - 6]]) { R(c, x, y, 2, 7, PAL.outline); R(c, x - 1, y - 3, 4, 3, PAL.lamp); }
-    tree(c, m - rr - 6, m - rr * 0.6, r, { ...pal, leaf: ["#3a4a3a", "#4a5a4a", "#2a3a2a"] });
-    tree(c, m + rr - 8, m - rr * 0.8, r, { ...pal, leaf: ["#3a4a3a", "#4a5a4a", "#2a3a2a"] });
+    c.strokeStyle = "rgba(30,26,40,0.9)"; c.lineWidth = 0.7; c.beginPath(); c.arc(m, m + rr * 0.82 - 3, 7, Math.PI, 0); c.stroke();
+    lamp(c, m - rr + 6, m + 8); lamp(c, m + rr - 8, m - 6);
+    const dim = { ...pal, leaf: ["#34463c", "#44584c", "#2a3a32"] };
+    tree(c, m - rr - 6, m - rr * 0.6, r, dim, 1.2); tree(c, m + rr - 8, m - rr * 0.8, r, dim, 1.1);
   }
-  img = { img: cv, size: S, poly: poly.map(([x, y]) => [x - m, y - m]) };
+  img = { img: cv, size: FEAT };
   featCache.set(key, img);
-  if (featCache.size > 120) featCache.delete(featCache.keys().next().value);
+  if (featCache.size > 60) featCache.delete(featCache.keys().next().value);
   return img;
+}
+function lamp(c, x, y) {
+  const g = c.createRadialGradient(x + 1, y - 1, 0, x + 1, y - 1, 10); g.addColorStop(0, "rgba(255,200,120,0.35)"); g.addColorStop(1, "rgba(255,200,120,0)");
+  c.fillStyle = g; c.fillRect(x - 10, y - 11, 22, 22);
+  c.fillStyle = "#2a2436"; c.fillRect(x + 0.4, y, 1.2, 7);
+  c.fillStyle = "#ffd28a"; c.beginPath(); c.arc(x + 1, y - 1, 1.6, 0, 7); c.fill();
 }
 
 // Graves spiral outward from the middle of the cemetery (oldest in the middle).
@@ -428,14 +477,16 @@ export function gravePos(i) {
 }
 export const CEMETERY_CAP = 52;
 
-// Low-detail drawing (far zoom): river + paths as strokes.
+// Far zoom: river + paths as strokes straight onto the screen.
 export function drawLowLod(ctx, x0, y0, x1, y1, n, toScreen, s) {
-  ctx.strokeStyle = "#2f5a86";
+  const pal = palette();
+  ctx.lineCap = "round"; ctx.lineJoin = "round";
+  ctx.strokeStyle = pal.water;
   ctx.lineWidth = Math.max(2, RIVER_W * 2 * s);
   ctx.beginPath();
   for (let x = x0 - 20; x <= x1 + 20; x += 16) { const [sx, sy] = toScreen(x, riverY(x)); x === x0 - 20 ? ctx.moveTo(sx, sy) : ctx.lineTo(sx, sy); }
   ctx.stroke();
-  ctx.strokeStyle = "#6e5a44";
+  ctx.strokeStyle = pal.path;
   ctx.lineWidth = Math.max(1, 4 * s);
   ctx.beginPath();
   for (const p of pathsIn(x0, y0, x1, y1, n)) {

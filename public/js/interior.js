@@ -12,6 +12,8 @@ import { sheetFor, frameFor, posesFor } from "./sprites.js";
 import { lookFor, drawV2 } from "./creatures.js";
 import { hash32, rng, offscreen, clamp, BUSY } from "./util.js";
 import { shade } from "./art.js";
+import { RENDER_STYLES, isRenderStyle, styledCanvas } from "./paint.js";
+import { svgRaster } from "./creatures.js";
 
 export const WALL = 3;
 export const IDLE_SLEEP_MS = 3 * 60_000;
@@ -25,7 +27,7 @@ const O = "#140f1c";
 const TOOL_SPOT = {
   Bash: "bench", Read: "shelf", Grep: "shelf", Glob: "shelf", LS: "shelf",
   Edit: "write", Write: "write", MultiEdit: "write", NotebookEdit: "write", apply_patch: "write",
-  WebFetch: "radio", WebSearch: "radio", MCP: "mcp",
+  WebFetch: "radio", WebSearch: "radio", MCP: "mcp", Task: "agent", Agent: "agent",
 };
 export const SPOT_LABEL = { desk: "desk", shelf: "bookshelf", bench: "terminal", write: "writing table", mcp: "MCP corner", radio: "radio", rest: "sofa", door: "front door", bed: "bed" };
 
@@ -128,7 +130,7 @@ function walkPoly(pts, step, fn) {
 // ---------- floor plan ----------
 
 const planCache = new Map();
-const dwellings = new Map(); // homeId -> chosen dwelling (server field `dwelling`), if any
+const meta = new Map(); // homeId -> { dwelling, style, art, art_status } from the server
 const listeners = new Set();
 export const onDwellingChange = (fn) => (listeners.add(fn), () => listeners.delete(fn));
 
@@ -139,10 +141,18 @@ const DWELLING_KIND = {
   tent: ["camp"], burrow: ["burrow"], cave: ["burrow", "cave"], greenhouse: ["greenhouse"],
   pond: ["dock"], boat: ["dock", "boat"], treehouse: ["dock", "tree"],
 };
-export function setDwelling(homeId, dwelling) {
-  const d = DWELLING_KIND[dwelling] ? dwelling : null;
-  if ((dwellings.get(homeId) ?? null) === d) return;
-  if (d) dwellings.set(homeId, d); else dwellings.delete(homeId);
+export function setDwelling(homeId, dwelling) { setHomeMeta(homeId, { dwelling }); }
+// Accepts any subset of { dwelling, style, art, art_status }; re-plans the home when something changed.
+export function setHomeMeta(homeId, m) {
+  const prev = meta.get(homeId) ?? {};
+  const next = { ...prev };
+  if ("dwelling" in m) next.dwelling = DWELLING_KIND[m.dwelling] ? m.dwelling : null;
+  if ("style" in m) next.style = isRenderStyle(m.style) ? m.style : null;
+  if ("art" in m) next.art = m.art ?? null;
+  if ("art_status" in m) next.art_status = m.art_status ?? null;
+  const sig = (o) => `${o.dwelling ?? ""}|${o.style ?? ""}|${o.art_status ?? ""}|${o.art ? JSON.stringify(o.art).length : 0}`;
+  if (sig(prev) === sig(next)) return;
+  meta.set(homeId, next);
   planCache.delete(homeId);
   for (const k of [...baseCache.keys()]) if (k.startsWith(homeId + "|")) baseCache.delete(k);
   for (const fn of listeners) fn(homeId);
@@ -151,7 +161,13 @@ export function setDwelling(homeId, dwelling) {
 export function planFor(homeId) {
   let plan = planCache.get(homeId);
   if (plan) return plan;
-  const chosen = DWELLING_KIND[dwellings.get(homeId)] ?? null;
+  const m = meta.get(homeId) ?? {};
+  if (m.art_status === "ready" && validArt(m.art)) {
+    plan = planFromArt(homeId, m.art, m.style);
+    planCache.set(homeId, plan);
+    return plan;
+  }
+  const chosen = DWELLING_KIND[m.dwelling] ?? null;
   const flavor = chosen?.[1] ?? null;
   const h = hash32(homeId || "home");
   const r = rng(h ^ 0x9e3779b9);
@@ -289,7 +305,8 @@ export function planFor(homeId) {
     return best;
   };
 
-  plan = { id: homeId, kind, flavor, open, blob, seed: h, W, H, mirror, rooms, gaps, doors, front, frontPt, desks, beds, furn, spots, extras, style, ext, foot: [...rects, ...extraRects], roomOf, cols };
+  const rstyle = m.style ?? RENDER_STYLES[hash32((homeId || "home") + "|style") % RENDER_STYLES.length];
+  plan = { id: homeId, kind, flavor, open, blob, rstyle, seed: h, W, H, mirror, rooms, gaps, doors, front, frontPt, desks, beds, furn, spots, extras, style, ext, foot: [...rects, ...extraRects], roomOf, cols };
   if (planCache.size > 4000) planCache.delete(planCache.keys().next().value);
   planCache.set(homeId, plan);
   return plan;
@@ -324,15 +341,17 @@ export function onFootprint(plan, x, y) {
 function R(c, x, y, w, h, col) { c.fillStyle = col; c.fillRect(x, y, w, h); }
 const baseCache = new Map();
 
-export function houseBase(homeId, desks, beds) {
+export function houseBase(homeId, desks, beds, s = 1) {
   const plan = planFor(homeId);
-  const key = `${homeId}|${desks}|${beds}|${season()}`;
+  const pixel = plan.rstyle === "pixel";
+  const sc = pixel ? 1 : Math.max(1, Math.round(s));
+  const key = `${homeId}|${desks}|${beds}|${season()}|${plan.rstyle}|${sc}`;
   let img = baseCache.get(key);
-  if (img) return img;
-  if (baseCache.size > 400) baseCache.delete(baseCache.keys().next().value);
+  if (img) { baseCache.delete(key); baseCache.set(key, img); return img; }
+  if (baseCache.size > (pixel ? 400 : 80)) baseCache.delete(baseCache.keys().next().value);
   const { W, H, rooms, style, furn, extras } = plan;
   const r = rng(plan.seed ^ 0x51ed);
-  const [cv, c] = offscreen(W + PAD * 2, H + PAD * 2);
+  const [cv, c] = styledCanvas(W + PAD * 2, H + PAD * 2, sc, plan.rstyle, plan.seed);
   c.translate(PAD, PAD);
   const wall = style.wall;
 
@@ -379,6 +398,7 @@ export function houseBase(homeId, desks, beds) {
     }
   }
   // floors
+  for (const [, [a, b, c2, d]] of Object.entries(rooms)) c.backdrop?.(a, b, c2 - a, d - b);
   for (const [k, [a, b, c2, d]] of Object.entries(rooms)) drawFloor(c, style.floor[k], a, b, c2 - a, d - b, r, style.carpet);
   // doorways (floor shows through) + front door threshold
   for (const [x, y, w, h] of plan.gaps) R(c, x, y, w, h, "#7a5a40");
@@ -433,9 +453,17 @@ export function houseBase(homeId, desks, beds) {
 }
 
 const overlayCache = new Map();
+let artStyle = "pixel", artScale = 1;
 function cachedArt(key, w, h, paint) {
-  let img = overlayCache.get(key);
-  if (!img) { const [cv, c] = offscreen(w, h); paint(c); overlayCache.set(key, (img = cv)); }
+  const sc = artStyle === "pixel" ? 1 : Math.max(1, Math.round(artScale));
+  const k2 = `${key}|${artStyle}|${sc}`;
+  let img = overlayCache.get(k2);
+  if (!img) {
+    const [cv, c] = styledCanvas(w, h, sc, artStyle, hash32(key));
+    paint(c);
+    overlayCache.set(k2, (img = cv));
+    if (overlayCache.size > 600) overlayCache.delete(overlayCache.keys().next().value);
+  }
   return img;
 }
 const deskImg = (kind) => cachedArt("desk|" + kind, 20, 10, (c) => {
@@ -489,6 +517,7 @@ function paintOpenBase(c, plan, desks, beds, r) {
   const inner = kind === "dock" || kind === "burrow" ? scalePoly(blob, cx, cy, kind === "dock" ? 0.85 : 0.89) : scalePoly(blob, cx, cy, 0.97);
   c.save();
   c.beginPath(); inner.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y))); c.closePath(); c.clip();
+  c.backdrop?.(-20, -20, W + 40, H + 40);
   drawFloor(c, plan.style.floor.O, -20, -20, W + 40, H + 40, r, plan.style.carpet);
   if (kind === "burrow") for (let i = 0; i < 10; i++) { const x = (r() * W) | 0, y = (r() * H) | 0; R(c, x, y, 6, 1, "#4a3020"); R(c, x + 5, y + 1, 3, 1, "#4a3020"); } // roots
   c.restore();
@@ -551,6 +580,7 @@ const PAL_TRUNK = "#4a3328", PAL_FLOWER = "#e8a0b4";
 
 // Cheap stand-in for far zoom levels: footprint only.
 export function drawFootprint(ctx, plan, X0, Y0, s, lit) {
+  if (plan.art && drawArtLayers(ctx, plan, X0, Y0, s, 0, true)) return;
   if (plan.blob) {
     const path = (k) => { const cx = plan.W / 2, cy = plan.H / 2; ctx.beginPath(); plan.blob.forEach(([x, y], i) => { const px = X0 + (cx + (x - cx) * k) * s, py = Y0 + (cy + (y - cy) * k) * s; i ? ctx.lineTo(px, py) : ctx.moveTo(px, py); }); ctx.closePath(); };
     ctx.fillStyle = plan.kind === "dock" ? "#2f5a86" : plan.kind === "camp" ? "#5e4430" : plan.kind === "burrow" ? "#3a2a1e" : "#efe6d4";
@@ -565,6 +595,104 @@ export function drawFootprint(ctx, plan, X0, Y0, s, lit) {
   for (const [a, b, c, d] of Object.values(plan.rooms)) ctx.fillRect(X0 + (a - 2) * s, Y0 + (b - 2) * s, (c - a + 4) * s, (d - b + 4) * s);
   ctx.fillStyle = lit ? "#a8845a" : "#4a4060";
   for (const [a, b, c, d] of Object.values(plan.rooms)) ctx.fillRect(X0 + a * s, Y0 + b * s, (c - a) * s, (d - b) * s);
+}
+
+// ---------- Claude-generated dwelling art (v1) ----------
+// { v:1, viewBox, style?, footprint:[[x,y]…], layers:[{id, svg, optional?}], anim:[{layer,type,…}], spots:{…} }
+export function validArt(a) {
+  if (!a || typeof a !== "object" || a.v !== 1) return false;
+  const vb = String(a.viewBox ?? "").trim().split(/[\s,]+/).map(Number);
+  if (vb.length !== 4 || vb.some((n) => !Number.isFinite(n)) || vb[2] <= 0 || vb[3] <= 0) return false;
+  if (!Array.isArray(a.layers) || !a.layers.length || a.layers.length > 8) return false;
+  return a.layers.every((l) => l && typeof l.svg === "string" && l.svg.length <= 80_000);
+}
+
+function planFromArt(homeId, art, style) {
+  const vb = String(art.viewBox).trim().split(/[\s,]+/).map(Number);
+  const k = Math.min(144 / vb[2], 104 / vb[3]);
+  const T = (p) => [(p[0] - vb[0]) * k, (p[1] - vb[1]) * k];
+  const W = vb[2] * k, H = vb[3] * k;
+  const ok = (p) => Array.isArray(p) && p.length === 2 && p.every(Number.isFinite);
+  const pts = (v) => (ok(v) ? [T(v)] : Array.isArray(v) ? v.filter(ok).map(T) : []);
+  const sp = art.spots ?? {};
+  const center = [W / 2, H * 0.6];
+  const door = ok(sp.door) ? T(sp.door) : [W / 2, H - 4];
+  const desks = pts(sp.desk); if (!desks.length) desks.push(center);
+  const rest = pts(sp.rest); if (!rest.length) rest.push([center[0] - 10, center[1]]);
+  const bedPts = pts(sp.bed); if (!bedPts.length) bedPts.push(...rest);
+  const one = (v) => { const p = pts(v); return p.length ? p : null; };
+  const spot = (pose, list) => (list ? { pose, pts: list } : null);
+  const foot = Array.isArray(art.footprint) && art.footprint.filter(ok).length >= 3 ? art.footprint.filter(ok).map(T) : [[0, 0], [W, 0], [W, H], [0, H]];
+  const xs = foot.map((p) => p[0]), ys = foot.map((p) => p[1]);
+  const ext = { x0: Math.min(0, ...xs) - 2, y0: Math.min(0, ...ys) - 2, x1: Math.max(W, ...xs) + 2, y1: Math.max(H, ...ys) + 2 };
+  const layers = art.layers.map((l, i) => ({ id: String(l.id ?? "l" + i), svg: l.svg, roof: l.id === "roof" || !!l.optional }));
+  const anim = (Array.isArray(art.anim) ? art.anim : []).slice(0, 16).map((a) => ({
+    layer: String(a.layer ?? ""), type: String(a.type ?? ""), amp: Number.isFinite(a.amp) ? a.amp : 3,
+    period: Number.isFinite(a.period) && a.period > 0.05 ? a.period : 2, phase: Number.isFinite(a.phase) ? a.phase : 0,
+    pivot: ok(a.pivot) ? T(a.pivot) : [W / 2, H / 2],
+  }));
+  const h = hash32(homeId);
+  const spots = {
+    shelf: spot("stand", one(sp.books)), bench: spot("stand", one(sp.terminal)), write: spot("stand", one(sp.write)),
+    mcp: spot("stand", one(sp.mcp)), radio: spot("stand", one(sp.web)), agent: spot("stand", one(sp.agent)),
+    rest: spot("sit", rest), door: spot("stand", [door, [door[0] - 7, door[1] - 3], [door[0] + 7, door[1] - 3]]),
+  };
+  for (const kk of Object.keys(spots)) if (!spots[kk]) delete spots[kk];
+  return {
+    id: homeId, kind: "art", open: true, blob: foot, rstyle: style ?? "flat", seed: h, W, H, mirror: false,
+    art: { key: "art:" + hash32(JSON.stringify(art)), vb: vb.join(" "), style: typeof art.style === "string" ? art.style : "", layers, anim },
+    rooms: { O: [0, 0, W, H] }, gaps: [], doors: {}, front: [door[0] - 7, door[1] - 3, 14], frontPt: door,
+    desks: desks.map(([x, y]) => [x - 10, y]), beds: bedPts.map(([x, y]) => ({ x: x - 5, y: y - 9 })),
+    furn: {}, spots, extras: { windows: [] }, style: { blankets: BLANKETS.slice(0, 4), wall: { c: "#d8c8b0" } },
+    ext, foot: [[ext.x0, ext.y0, ext.x1, ext.y1]], roomOf: () => "O", cols: 0,
+  };
+}
+
+function layerTransform(list, tSec) {
+  const x = { tx: 0, ty: 0, rot: 0, sx: 1, sy: 1 };
+  for (const a of list) {
+    const w = (2 * Math.PI * tSec) / a.period + a.phase;
+    if (a.type === "bob") x.ty += a.amp * Math.sin(w);
+    else if (a.type === "shake") x.tx += a.amp * Math.sin(w * 3);
+    else if (a.type === "sway") x.rot += a.amp * Math.sin(w);
+    else if (a.type === "wiggle") x.rot += a.amp * Math.sin(w * 4);
+    else if (a.type === "pulse") { const kk = 1 + (a.amp / 100) * Math.sin(w); x.sx *= kk; x.sy *= kk; }
+    else if (a.type === "spin") x.rot += (360 * tSec) / a.period;
+    else if (a.type === "flap") x.sx *= 1 - (Math.abs(a.amp) / 100) * (0.5 + 0.5 * Math.sin(w));
+    else if (a.type === "blink" && (tSec + a.phase) % a.period < 0.13) x.sy *= 0.1;
+  }
+  return x;
+}
+
+// Draw a Claude-generated dwelling. roof: true at far zoom (shows the optional roof layer).
+export function drawArtLayers(ctx, plan, X0, Y0, s, t, roof) {
+  const a = plan.art;
+  const r = svgRaster(a.key, a.vb, a.style, a.layers.map((l) => l.svg), plan.H * s);
+  if (!r) { // still loading: soft footprint
+    ctx.fillStyle = "rgba(220, 200, 170, 0.35)";
+    ctx.beginPath(); plan.blob.forEach(([x, y], i) => (i ? ctx.lineTo(X0 + x * s, Y0 + y * s) : ctx.moveTo(X0 + x * s, Y0 + y * s))); ctx.closePath(); ctx.fill();
+    return false;
+  }
+  const prev = ctx.imageSmoothingEnabled;
+  ctx.imageSmoothingEnabled = true;
+  const tSec = t / 1000;
+  a.layers.forEach((l, i) => {
+    if (l.roof !== roof && l.roof) return;
+    const cv = r.canvases[i];
+    if (!cv) return;
+    const anims = a.anim.filter((q) => q.layer === l.id);
+    if (anims.length) {
+      const x = layerTransform(anims, tSec);
+      const [px, py] = anims[0].pivot;
+      ctx.save();
+      ctx.translate(X0 + (px + x.tx) * s, Y0 + (py + x.ty) * s);
+      ctx.rotate((x.rot * Math.PI) / 180); ctx.scale(x.sx, x.sy);
+      ctx.drawImage(cv, -px * s, -py * s, plan.W * s, plan.H * s);
+      ctx.restore();
+    } else ctx.drawImage(cv, X0, Y0, plan.W * s, plan.H * s);
+  });
+  ctx.imageSmoothingEnabled = prev;
+  return true;
 }
 
 // ---------- simulation ----------
@@ -733,6 +861,7 @@ export class HomeSim {
     }
     let kind;
     if (a.status === "tool") kind = TOOL_SPOT[a.tool] ?? "desk";
+    if (kind !== "desk" && kind && !["door", "rest", "bed"].includes(kind) && !plan.spots[kind]?.pts?.length) kind = "desk";
     else if (a.status === "thinking") kind = "desk";
     else if (a.status === "waiting") kind = "door";
     else if (a.status === "idle") kind = a.last_seen && Date.now() - a.last_seen > IDLE_SLEEP_MS ? "bed" : "rest";
@@ -747,7 +876,7 @@ export class HomeSim {
         return { kind, pose: "stand", x: x + 23, y: top + 2 + Math.max(0, n) * 4 };
       }
       const [x, y] = this.deskSpot(e);
-      return { kind, pose: "seat", x, y };
+      return { kind, pose: plan.art ? "stand" : "seat", x, y };
     }
     const k = this.claim(kind, e);
     const spot = plan.spots[kind];
@@ -823,15 +952,22 @@ export class HomeSim {
   draw(ctx, X0, Y0, s, t, { reduced = false, now = performance.now() } = {}) {
     const plan = this.plan;
     const desks = this.deskCount(), beds = this.bedCount();
-    const base = houseBase(this.homeId, desks, beds);
-    ctx.drawImage(base, Math.round(X0 - PAD * s), Math.round(Y0 - PAD * s), Math.round(base.width * s), Math.round(base.height * s));
+    if (plan.art) drawArtLayers(ctx, plan, X0, Y0, s, t, false);
+    else {
+    artStyle = plan.rstyle; artScale = s;
+    const base = houseBase(this.homeId, desks, beds, s);
+    const bs = plan.rstyle === "pixel" ? s : 1 * (s / Math.max(1, Math.round(s)));
+    if (plan.rstyle !== "pixel") ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(base, Math.round(X0 - PAD * s), Math.round(Y0 - PAD * s), Math.round(base.width * bs), Math.round(base.height * bs));
+    ctx.imageSmoothingEnabled = false;
+    }
     const P = Math.round;
     const items = [];
     const deskBusy = new Map();
     for (const e of this.ents.values()) {
       if (!e.sleeper && !e.mini && e.pose === "seat" && e.target?.kind === "desk") deskBusy.set((this.deskOf.get(e.id) ?? 0) % plan.desks.length, e);
     }
-    for (let i = 0; i < desks; i++) {
+    for (let i = 0; i < (plan.art ? 0 : desks); i++) {
       const [x, top] = plan.desks[i];
       const occ = deskBusy.get(i);
       const kind = occ ? this.personas.get(occ.a.persona_id)?.kind : "";
@@ -840,7 +976,7 @@ export class HomeSim {
         ctx.drawImage(laptopImg(!!occ && BUSY.has(occ.a.status), kind), P(X0 + (x + 6) * s), P(Y0 + (top - 4) * s), P(8 * s), P(6 * s));
       } });
     }
-    { const [x, y] = plan.furn.write; items.push({ y: y + 0.2, draw: () => ctx.drawImage(writeTableImg(), P(X0 + x * s), P(Y0 + (y - 1) * s), P(20 * s), P(10 * s)) }); }
+    if (plan.furn.write) { const [x, y] = plan.furn.write; items.push({ y: y + 0.2, draw: () => ctx.drawImage(writeTableImg(), P(X0 + x * s), P(Y0 + (y - 1) * s), P(20 * s), P(10 * s)) }); }
 
     const anchors = [];
     for (const e of this.ents.values()) {
@@ -849,7 +985,7 @@ export class HomeSim {
       const y = bed ? bed.y + 6.9 : e.pose === "seat" ? e.y - 0.5 : e.y;
       items.push({ y, draw: () => {
         const top = this.drawResident(ctx, e, persona, X0, Y0, s, t, now, reduced, bed);
-        if (bed) {
+        if (bed && !plan.art) {
           const bi = plan.beds.indexOf(bed);
           ctx.drawImage(blanketImg(plan.style.blankets[bi % 4], plan.kind), P(X0 + (bed.x + 1) * s), P(Y0 + (bed.y + 7) * s), P(9 * s), P(22 * s));
         }

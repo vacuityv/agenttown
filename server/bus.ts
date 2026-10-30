@@ -5,7 +5,11 @@ export type BusEvent =
   | { type: "persona"; home_id: string; data: unknown }
   | { type: "session"; home_id: string; data: unknown }
   | { type: "counts"; home_id: string; data: { open: number; busy: number } }
-  | { type: "agent"; home_id: string; data: unknown };
+  | { type: "agent"; home_id: string; data: unknown }
+  // free town
+  | { type: "say"; home_id: string; data: unknown }
+  | { type: "tombstone"; home_id: string; data: unknown }
+  | { type: "home_removed"; home_id: string; data: unknown };
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(0);

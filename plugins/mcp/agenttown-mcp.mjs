@@ -33,7 +33,7 @@ async function loadCli() {
 function loadConfig() {
   try {
     const cfg = JSON.parse(readFileSync(CONFIG_PATH, "utf8"));
-    return cfg?.owner_key ? cfg : null;
+    return cfg?.owner_key || (cfg?.device_token && cfg?.enc_key) ? cfg : null; // owner or device credentials
   } catch { return null; }
 }
 
@@ -78,7 +78,7 @@ async function callTool(name, args = {}) {
   if (!cli) return text("Agent Town CLI (agenttown.mjs) not found; install it to ~/.agenttown/agenttown.mjs.", true);
   if (name === "agenttown_whoami") {
     const server = (process.env.AGENTTOWN_SERVER || cfg.server).replace(/\/$/, "");
-    const res = await fetch(`${server}/v1/me`, { headers: { authorization: `Bearer ${cli.authToken(cfg.owner_key)}` }, signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${server}/v1/me`, { headers: { authorization: `Bearer ${cli.tokenOf(cfg)}` }, signal: AbortSignal.timeout(5000) });
     const me = await res.json().catch(() => ({}));
     if (!res.ok) return text(`Server error: ${me.message || res.status}`, true);
     return text(JSON.stringify({ home: me.home, home_url: me.home_url, persona: personaName(cfg), kind, session }));

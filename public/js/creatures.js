@@ -87,6 +87,22 @@ function rasterize(look, bucket) {
   return r;
 }
 
+// Generic: rasterize a list of SVG fragments (sharing one viewBox) at a given pixel height.
+const generic = new Map();
+export function svgRaster(key, vb, style, svgs, px) {
+  const bucket = [64, 128, 256, 512, 1024].find((b) => b >= px) ?? 1024;
+  const id = `${key}|${bucket}`;
+  let r = generic.get(id);
+  if (!r) {
+    r = rasterize({ key: `g:${key}`, vb, style, parts: svgs.map((svg, i) => ({ id: "l" + i, svg })) }, bucket);
+    generic.set(id, r);
+    if (generic.size > 200) generic.delete(generic.keys().next().value);
+  }
+  if (r.ready >= svgs.length) return r;
+  for (const b of [64, 128, 256, 512, 1024]) { const o = generic.get(`${key}|${b}`); if (o && o.ready >= svgs.length) return o; }
+  return null;
+}
+
 const BUCKETS = [24, 48, 96, 192, 320];
 function bestRaster(look, px) {
   const want = BUCKETS.find((b) => b >= px) ?? BUCKETS[BUCKETS.length - 1];

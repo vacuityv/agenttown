@@ -4,7 +4,7 @@
 import { api, fetchWorld, openStream } from "./api.js";
 import { HomeSim, statusLine, drawFootprint, onFootprint, setDwelling, onDwellingChange } from "./interior.js";
 import {
-  CHUNK, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
+  CHUNK_PX, tileSize, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
   featureImage, gravePos, CEMETERY_CAP, drawLowLod, riverY, inPoly,
 } from "./village.js";
 import { spriteIcon } from "./sprites.js";
@@ -36,14 +36,19 @@ function glowImage() {
 
 const STONES = ["round", "cross", "obelisk", "flat"];
 function drawHeadstone(ctx, x, y, s, shape, fresh) {
-  const P = (dx, dy, w, h, c) => { ctx.fillStyle = c; ctx.fillRect(Math.round(x + dx * s), Math.round(y + dy * s), Math.ceil(w * s), Math.ceil(h * s)); };
-  const stone = "#a7a3ad", dark = "#140f1c";
-  P(-4, 2, 8, 3, "#2a4234"); // mound
-  if (shape === "cross") { P(-1, -8, 3, 10, dark); P(-3, -6, 7, 3, dark); P(0, -7, 1, 8, stone); P(-2, -5, 5, 1, stone); }
-  else if (shape === "obelisk") { P(-2, -9, 5, 11, dark); P(-1, -8, 3, 9, stone); P(0, -10, 1, 1, dark); }
-  else if (shape === "flat") { P(-4, -2, 9, 4, dark); P(-3, -1, 7, 2, stone); }
-  else { P(-3, -6, 7, 8, dark); P(-2, -7, 5, 1, dark); P(-2, -5, 5, 6, stone); P(-1, -6, 3, 1, stone); }
-  if (fresh) { P(2, 1, 1, 1, "#e8a0b4"); P(3, 0, 1, 1, "#f2cc8f"); }
+  ctx.save();
+  ctx.translate(x, y); ctx.scale(s, s);
+  ctx.fillStyle = "rgba(0,0,0,0.25)"; ctx.beginPath(); ctx.ellipse(0.5, 2.5, 4.5, 1.6, 0, 0, 7); ctx.fill();
+  const g = ctx.createLinearGradient(-3, -8, 3, 2); g.addColorStop(0, "#c2bdc9"); g.addColorStop(1, "#7d7888");
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  if (shape === "cross") { ctx.rect(-0.9, -8, 1.8, 10); ctx.rect(-3, -6, 6, 1.8); }
+  else if (shape === "obelisk") { ctx.moveTo(-1.6, 2); ctx.lineTo(-1.1, -7); ctx.lineTo(0, -9); ctx.lineTo(1.1, -7); ctx.lineTo(1.6, 2); ctx.closePath(); }
+  else if (shape === "flat") { ctx.ellipse(0, 0.5, 4, 2, 0, 0, 7); }
+  else { ctx.moveTo(-3, 2); ctx.lineTo(-3, -4); ctx.arc(0, -4, 3, Math.PI, 0); ctx.lineTo(3, 2); ctx.closePath(); }
+  ctx.fill();
+  if (fresh) { ctx.fillStyle = "#f2b8c8"; ctx.beginPath(); ctx.arc(2.6, 1.6, 0.8, 0, 7); ctx.fill(); ctx.fillStyle = "#f2d27a"; ctx.beginPath(); ctx.arc(3.6, 1.2, 0.6, 0, 7); ctx.fill(); }
+  ctx.restore();
 }
 
 export function mountTown(root, { navigate, setHeaderStats }) {
@@ -437,17 +442,18 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     const R = (x) => Math.round(x);
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.imageSmoothingEnabled = false;
-    ctx.fillStyle = "#1f3b33";
+    ctx.fillStyle = "#21312b";
     ctx.fillRect(0, 0, W, H);
 
     // terrain
     if (cam.zoom >= 0.5) {
-      for (let iy = Math.floor(v.y0 / CHUNK); iy <= Math.floor(v.y1 / CHUNK); iy++)
-        for (let ix = Math.floor(v.x0 / CHUNK); ix <= Math.floor(v.x1 / CHUNK); ix++) {
-          const [sx, sy] = toS(ix * CHUNK, iy * CHUNK);
-          ctx.drawImage(chunkImage(ix, iy), R(sx), R(sy), Math.ceil(CHUNK * s), Math.ceil(CHUNK * s));
+      const TW = tileSize(s);
+      for (let iy = Math.floor(v.y0 / TW); iy <= Math.floor(v.y1 / TW); iy++)
+        for (let ix = Math.floor(v.x0 / TW); ix <= Math.floor(v.x1 / TW); ix++) {
+          const [sx, sy] = toS(ix * TW, iy * TW);
+          ctx.drawImage(chunkImage(ix, iy, s), R(sx), R(sy), CHUNK_PX, CHUNK_PX);
         }
-    } else drawLowLod(ctx, v.x0, v.y0, v.x1, v.y1, n, toS, s);
+    } else { ctx.fillStyle = "#21312b"; ctx.fillRect(0, 0, W, H); drawLowLod(ctx, v.x0, v.y0, v.x1, v.y1, n, toS, s); }
 
     // features
     const cs = cemeteries();
@@ -456,9 +462,9 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       const ci = cs.indexOf(f);
       const count = ci < 0 ? 0 : clamp(graves.list.length - ci * CEMETERY_CAP, 0, CEMETERY_CAP);
       if (f.kind === "cemetery" && ci > 0 && count === 0) continue; // spare plots stay meadow until needed
-      const img = featureImage(f, count);
+      const img = featureImage(f, count, s);
       const [sx, sy] = toS(f.x - img.size / 2, f.y - img.size / 2);
-      ctx.drawImage(img.img, R(sx), R(sy), R(img.size * s), R(img.size * s));
+      ctx.drawImage(img.img, R(sx), R(sy));
       if (f.kind === "cemetery") {
         for (let i = 0; i < count; i++) {
           const g = graves.list[ci * CEMETERY_CAP + i];
@@ -486,12 +492,12 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       }
       const plan = l.plan;
       if (cam.zoom >= 0.5) {
-        const g = homeGround(k);
+        const g = homeGround(k, s);
         const [gx, gy] = toS(g.x, g.y);
-        ctx.drawImage(g.img, R(gx), R(gy), R(g.img.width * s), R(g.img.height * s));
+        ctx.drawImage(g.img, R(gx), R(gy));
       } else {
         const [x, y] = toS(l.cx, l.cy);
-        ctx.fillStyle = "#2a4f3f"; ctx.beginPath(); ctx.ellipse(x, y, l.rx * s, l.ry * s, 0, 0, 7); ctx.fill();
+        ctx.fillStyle = "#2b4438"; ctx.beginPath(); ctx.ellipse(x, y, l.rx * s, l.ry * s, 0, 0, 7); ctx.fill();
       }
       const [X0, Y0] = toS(l.ox, l.oy);
       const sim = sims.get(e.home.id);

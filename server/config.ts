@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 
 export const PORT = Number(process.env.PORT ?? 8787);
 export const PUBLIC_URL = (process.env.PUBLIC_URL ?? `http://localhost:${PORT}`).replace(/\/$/, "");
-export const DB_PATH = process.env.DB_PATH ?? "data/agenttown.db";
+// mysql://user:pass@host:3306/db (required)
+export const MYSQL_URL = process.env.MYSQL_URL;
 // Leading zero bits required for the registration proof-of-work (~2^n hashes).
 export const POW_DIFFICULTY = Number(process.env.POW_DIFFICULTY ?? 20);
 // Signs registration challenges. Ephemeral is fine: challenges only live 10 minutes.
@@ -20,3 +21,6 @@ export const LIMITS = {
   busyTimeoutMs: 30 * 60_000,
   retentionMs: 14 * 24 * 3600_000,
 };
+
+// Device invites: single use, short-lived (overridable for tests).
+export const INVITE_TTL_MS = Number(process.env.INVITE_TTL_MS ?? 15 * 60_000);

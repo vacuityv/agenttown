@@ -1,18 +1,22 @@
-// End-to-end smoke test: boots the server on a throwaway DB and drives it through the CLI.
+// End-to-end smoke test: boots the server on a freshly emptied test DB (TEST_MYSQL_URL) and drives it through the CLI.
 import { spawn, execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDecipheriv, createHmac } from "node:crypto";
 import assert from "node:assert/strict";
+import { resetTestDb } from "./test-db.ts";
 
 const PORT = 8797;
 const BASE = `http://localhost:${PORT}`;
 const dir = mkdtempSync(join(tmpdir(), "agenttown-smoke-"));
-const env = { ...process.env, PORT: String(PORT), DB_PATH: join(dir, "t.db"), POW_DIFFICULTY: "8", PUBLIC_URL: BASE, ANTHROPIC_API_KEY: "" };
+const env = { ...process.env, PORT: String(PORT), MYSQL_URL: await resetTestDb(), POW_DIFFICULTY: "8", PUBLIC_URL: BASE, ANTHROPIC_API_KEY: "" };
 
 const server = spawn(process.execPath, ["--disable-warning=ExperimentalWarning", "server/index.ts"], { env, stdio: ["ignore", "pipe", "inherit"] });
-await new Promise<void>((ok) => server.stdout!.on("data", (d) => String(d).includes("listening") && ok()));
+await new Promise<void>((ok, fail) => {
+  server.stdout!.on("data", (d) => String(d).includes("listening") && ok());
+  server.on("exit", (code) => fail(new Error(`server exited (${code})`)));
+});
 
 const cliEnv = (name: string) => ({ ...env, AGENTTOWN_CONFIG: join(dir, name, "config.json"), AGENTTOWN_SERVER: BASE });
 const cli = (cfg: string, ...args: string[]) =>
@@ -88,6 +92,22 @@ try {
   assert.equal(bad.status, 401);
 
   assert.ok((await get(`/v1/homes/${cfg.home_id}/events`)).events.every((e: any) => e.persona_id), "events carry persona_id");
+
+  // 20 parallel first-reports for one new session (and a new persona, each with a task): one session, no errors.
+  const token = createHmac("sha256", cfg.owner_key).update("agenttown/auth/v1").digest("hex");
+  const enc = `v1.${"A".repeat(16)}.${"B".repeat(48)}`;
+  const race = await Promise.all(Array.from({ length: 20 }, (_, i) => fetch(`${BASE}/v1/report`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: JSON.stringify({ persona: { name: "Racer", kind: "codex" }, session: "race-1", status: i % 2 ? "tool" : "thinking", tool: "Bash", task: { title_enc: enc } }),
+  }).then(async (r) => ({ status: r.status, body: await r.json() as any }))));
+  assert.deepEqual(race.map((r) => r.status), Array(20).fill(200), "no errors under concurrent first-reports");
+  assert.equal(new Set(race.map((r) => r.body.session_id)).size, 1, "exactly one session");
+  assert.equal(new Set(race.map((r) => r.body.task_no)).size, 20, "task numbers are unique");
+  const raced = await get(`/v1/homes/${cfg.home_id}`);
+  assert.equal(raced.sessions.length, 1);
+  assert.equal(raced.personas.filter((p: any) => p.name === "Racer").length, 1, "exactly one persona");
+  assert.equal(raced.sessions[0].task_no, Math.max(...race.map((r) => r.body.task_no)));
 
   await new Promise((r) => setTimeout(r, 2300)); // counts/agent events are coalesced
   ac.abort();
