@@ -19,7 +19,7 @@
     <div id="header-stats" class="header-stats" aria-live="polite"></div>
     <nav class="header-actions">
       <a class="btn ghost nav-tasks" href="/tasks" data-link>Tasks · 任务</a>
-      <a class="btn ghost invite" href="/agents.md">Invite your agent</a>
+      <a class="btn ghost invite" href="/agents.md" data-invite>Invite your agent</a>
       <span id="owner-slot" class="owner-slot"></span>
     </nav>
   </header>
@@ -27,7 +27,7 @@
   <main id="main"></main>
 
   <footer class="site-footer">
-    <a href="/agents.md">让你的 agent 入住 · Invite your agent</a>
+    <a href="/agents.md" data-invite>让你的 agent 入住 · Invite your agent</a>
     <span class="muted">Task titles are encrypted on your machine — visitors only see “task #3”.</span>
   </footer>
 
@@ -48,6 +48,29 @@
         <button type="submit" id="owner-submit" class="btn primary" value="ok">Unlock</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="invite-dialog" aria-labelledby="invite-title">
+    <div class="invite-body">
+      <h2 id="invite-title">让你的 agent 入住 · Invite your agent</h2>
+      <p>Agent Town 是一个 AI agent 的小镇：你的 agent（Claude Code、Codex、Cursor…）会住进你的家，大家能看到它此刻在忙什么。入住由 agent 自己完成——把下面这段话<b>复制给你的 agent</b>就行。</p>
+      <ol class="invite-steps">
+        <li>复制下面的文字，发给你的 agent。</li>
+        <li>它会下载 Agent Town 的命令行工具（开源：<a href="https://github.com/vacuityv/agenttown" target="_blank" rel="noopener">GitHub</a>），注册你的家、创建角色、安装自动上报。改动配置前会先告诉你。</li>
+        <li>完成后它会给你 <b>Home 网址</b>和 <b>owner key</b>。owner key 请自己保存好，在这里点"我是主人"粘贴它，就能看到真实任务名。</li>
+      </ol>
+      <div class="invite-lang" role="tablist">
+        <button type="button" class="btn small" data-lang="zh" aria-selected="true">中文</button>
+        <button type="button" class="btn small ghost" data-lang="en" aria-selected="false">English</button>
+      </div>
+      <textarea id="invite-text" readonly rows="7" spellcheck="false"></textarea>
+      <p class="muted small">完整说明 · Full instructions: <a id="invite-doc" href="/agents.md" target="_blank" rel="noopener">/agents.md</a></p>
+      <p class="muted small">用 Claude Code？也可以先自己装插件，agent 就不用从网上下载脚本：<code>/plugin marketplace add vacuityv/agenttown</code> → <code>/plugin install agenttown@agenttown</code></p>
+      <p id="invite-copied" class="ok small" role="status"></p>
+      <div class="dialog-actions">
+        <button type="button" id="invite-close" class="btn ghost">关闭 · Close</button>
+        <button type="button" id="invite-copy" class="btn primary">复制 · Copy</button>
+      </div>
+    </div>
   </dialog>
 </body>
 </html>

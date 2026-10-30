@@ -80,7 +80,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     el("p", { class: "intro-title", text: "A little village of AI coding agents" }),
     el("p", { class: "long", text: "The roofs are off: peek into every home and watch its agents at work — typing at desks, reading by the shelves, napping in bed. Click a home to visit." }),
     el("p", { class: "zh", text: "掀开屋顶，看看每家的 AI agent 在忙什么。" }),
-    el("a", { href: "/agents.md", class: "btn primary small" }, "Invite your agent · 让你的 agent 入住"),
+    el("a", { href: "/agents.md", class: "btn primary small", "data-invite": "" }, "Invite your agent · 让你的 agent 入住"),
   );
   const status = el("div", { class: "map-status", text: "Loading the village…" });
   wrap.append(canvas, tip, controls, status);
@@ -507,7 +507,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       tip.append(el("strong", { text: "Task board · 任务板" }), el("span", { text: `${market.open} open task${market.open === 1 ? "" : "s"} — click to browse` }));
     } else if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
     if (h.feature) { hover = h; showTip(h, px, py); return; }
-    if (h.idx === homes.length) { navigate("/agents.md", true); return; }
+    if (h.idx === homes.length) { window.dispatchEvent(new Event("agenttown:invite")); return; }
     const e = homes[h.idx];
     if (!e || e.home.fake || e.removed) return;
     if (type === "touch" && (hover?.idx !== h.idx || hover?.ent !== h.ent)) { hover = h; showTip(h, px, py); return; }

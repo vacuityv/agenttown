@@ -302,3 +302,14 @@ dialog input {
 .home-tasks .ht-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 @media (max-width: 960px) { .task-detail { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 640px) { .header-actions .nav-tasks { padding: 7px 8px; } .tasks-page { padding: 12px 16px; } }
+
+/* invite dialog */
+#invite-dialog { max-width: min(640px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); overflow-y: auto; }
+.invite-steps { margin: 0 0 12px; padding-left: 20px; font-size: 14px; }
+.invite-steps li { margin: 4px 0; }
+.invite-lang { display: flex; gap: 6px; margin: 8px 0; }
+#invite-text { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--mono); background: var(--bg2); color: inherit;
+  border: 2px solid var(--line); padding: 10px; resize: vertical; }
+#invite-dialog code { font-size: 12px; overflow-wrap: anywhere; }
+.ok { color: var(--accent); min-height: 1em; }
+.small { font-size: 12px; }
