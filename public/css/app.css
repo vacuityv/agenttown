@@ -381,3 +381,4 @@ dialog input {
 .persona-list .session-rows li { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .persona-list .session-rows .dot { width: 7px; height: 7px; flex: none; }
 .persona-list .session-rows .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.persona-list li.sub { padding-left: 18px; }

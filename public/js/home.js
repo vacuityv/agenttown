@@ -270,39 +270,38 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     panelTimer = setTimeout(() => { panelTimer = 0; renderHead(); renderPersonas(); }, 250);
   }
 
+  // One row per character in the room: every open session (subagents included) is its own row, and a persona with
+  // no open session is one sleeping row — so the list always matches what you see in the house.
   function renderPersonas() {
-    const counts = new Map();
-    for (const s of sessions.values()) {
-      const c = counts.get(s.persona_id) ?? { open: 0, busy: 0 };
-      c.open++; if (BUSY.has(s.status)) c.busy++;
-      counts.set(s.persona_id, c);
+    const byPersona = new Map();
+    for (const x of sessions.values()) {
+      if (!byPersona.has(x.persona_id)) byPersona.set(x.persona_id, []);
+      byPersona.get(x.persona_id).push(x);
     }
-    const items = [...personas.values()].map((p) => {
-      const c = counts.get(p.id);
-      const state = c ? (c.busy ? tr("home.pWorking", { n: c.open }) : tr("home.pAwake", { n: c.open })) : tr("home.pAsleep");
-      return el("li", { class: c ? "on" : "off" },
-        spriteIcon(p, 1.5),
-        el("div", {},
-          el("strong", { text: p.name }),
-          el("span", { class: "muted small", text: `${kindLabel(p.kind)} · ${state}` }),
-          p.sprite_status === "pending" ? el("span", { class: "small accent", text: tr("home.newLook") }) : null,
-          p.appearance ? el("span", { class: "small muted appearance", text: `“${truncate(p.appearance, 90)}”` }) : null,
-          sessionRows(p.id)),
-        p.hidden ? null : reportButton("persona", p.id, ""));
-    });
+    const items = [];
+    for (const p of personas.values()) {
+      const mine = (byPersona.get(p.id) ?? []).sort((a, b) => (a.parent_id ? 1 : 0) - (b.parent_id ? 1 : 0) || a.started_at - b.started_at);
+      const mains = mine.filter((x) => !x.parent_id);
+      if (!mine.length) { items.push(residentRow(p, null, "", true)); continue; }
+      mine.forEach((x, i) => {
+        const n = x.parent_id ? "" : mains.length > 1 ? ` #${mains.indexOf(x) + 1}` : "";
+        items.push(residentRow(p, x, n, i === 0));
+      });
+    }
     personaList.replaceChildren(...(items.length ? items : [el("li", { class: "muted small", text: tr("home.noResidents") })]));
   }
-
-  // A persona with several open sessions shows several characters in the room: list each one so the count matches.
-  function sessionRows(pid) {
-    const mine = [...sessions.values()].filter((x) => x.persona_id === pid).sort((a, b) => a.started_at - b.started_at);
-    if (mine.length < 2 && !mine.some((x) => x.parent_id)) return null;
-    return el("ul", { class: "session-rows" }, ...mine.map((x) => {
-      const task = taskLine(x);
-      return el("li", {},
-        el("span", { class: "dot", style: `background:${STATUS_COLOR[x.status] ?? "#999"}` }),
-        el("span", { class: "small", text: `${x.parent_id ? tr("town.subagent") + " · " : ""}${statusText(x)}${task ? ` · ${truncate(task.text, 40)}` : ""}` }));
-    }));
+  function residentRow(p, x, suffix, first) {
+    const state = !x ? tr("home.pAsleep") : `${x.parent_id ? tr("town.subagent") + " · " : ""}${statusText(x)}`;
+    const task = x ? taskLine(x) : null;
+    return el("li", { class: `${x ? "on" : "off"}${x?.parent_id ? " sub" : ""}` },
+      spriteIcon(p, x?.parent_id ? 1 : 1.5),
+      el("div", {},
+        el("strong", { text: p.name + suffix }),
+        el("span", { class: "muted small", text: `${kindLabel(p.kind)} · ${state}` }),
+        task ? el("span", { class: "small", text: truncate(task.text, 60) }) : null,
+        first && p.sprite_status === "pending" ? el("span", { class: "small accent", text: tr("home.newLook") }) : null,
+        first && p.appearance ? el("span", { class: "small muted appearance", text: `“${truncate(p.appearance, 90)}”` }) : null),
+      first && !p.hidden ? reportButton("persona", p.id, "") : null);
   }
 
   function personaName(ev) {
