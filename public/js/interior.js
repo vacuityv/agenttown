@@ -720,7 +720,7 @@ export class HomeSim {
   relayout() {
     this.claims.clear();
     for (const e of [...this.ents.values()]) {
-      if (e.sleeper) { const g = this.bedGoal(e.a.persona_id); Object.assign(e, { x: g.x, y: g.y, target: g, path: [] }); }
+      if (e.sleeper) { e.target = null; const g = this.bedGoal(e.a.persona_id, e.id); Object.assign(e, { x: g.x, y: g.y, target: g, path: [] }); }
       else this.replan(e, false);
     }
   }
@@ -794,7 +794,7 @@ export class HomeSim {
     for (const p of this.personas.values()) {
       const id = "p:" + p.id;
       if (awake.has(p.id) || this.ents.has(id)) continue;
-      const g = this.bedGoal(p.id);
+      const g = this.bedGoal(p.id, id);
       this.ents.set(id, { id, a: { id, persona_id: p.id, status: "asleep" }, x: g.x, y: g.y, path: [], pose: "sleep", facing: 1, born: animate ? performance.now() : -1e9, dying: 0, mini: false, seed: hash32(id) % 9973, sleeper: true, target: g });
     }
     for (const [id, e] of this.ents) if (e.sleeper && (awake.has(e.a.persona_id) || !this.personas.has(e.a.persona_id))) this.removeEnt(id);
@@ -818,18 +818,26 @@ export class HomeSim {
     for (const id of this.personas.keys()) { if (id === pid) return i; i++; }
     return i;
   }
-  bedCount() { return clamp(this.personas.size, 2, this.plan.beds.length); }
+  bedCount() { return clamp(Math.max(this.personas.size, this.ents.size), 2, this.plan.beds.length); }
   deskCount() {
     let top = 0;
     for (const e of this.ents.values()) if (!e.sleeper && !e.mini) top++;
     return clamp(Math.max(top, this.personas.size, Math.max(-1, ...this.deskOf.values()) + 1), 2, this.plan.desks.length);
   }
-  bedGoal(pid) {
+  // One bed per resident entity (a persona with several sessions has several residents): keep the bed this entity
+  // already has, else take the lowest free one. Only when every bed is taken do two share (slightly offset).
+  bedGoal(pid, entId) {
     const beds = this.plan.beds;
-    const idx = this.personaIndex(pid);
-    const b = beds[idx % beds.length];
-    const extra = Math.floor(idx / beds.length);
-    return { kind: "bed", pose: "sleep", x: b.x + 5 + extra * 2, y: b.y + 9, bed: b };
+    const mine = entId ? this.ents.get(entId)?.target : null;
+    if (mine?.kind === "bed" && mine.bedIdx != null && mine.bedIdx < beds.length) return mine;
+    const used = new Set();
+    for (const o of this.ents.values()) if (o.id !== entId && o.target?.kind === "bed" && o.target.bedIdx != null) used.add(o.target.bedIdx);
+    let idx = -1;
+    for (let i = 0; i < beds.length; i++) if (!used.has(i)) { idx = i; break; }
+    let extra = 0;
+    if (idx < 0) { idx = this.personaIndex(pid) % beds.length; extra = 1; }
+    const b = beds[idx];
+    return { kind: "bed", pose: "sleep", x: b.x + 5 + extra * 2, y: b.y + 9, bed: b, bedIdx: idx };
   }
   deskSpot(e) {
     const d = this.deskOf.get(e.id) ?? 0;
@@ -863,7 +871,7 @@ export class HomeSim {
       }
       const others = [...this.ents.values()].some((o) => o !== e && !o.sleeper && !o.ending && o.a.persona_id === a.persona_id);
       if (others) return { kind: "door", pose: "stand", x: fx, y: fy, then: "pop" };
-      return { ...this.bedGoal(a.persona_id), then: "sleep" };
+      return { ...this.bedGoal(a.persona_id, e.id), then: "sleep" };
     }
     let kind;
     if (a.status === "tool") kind = TOOL_SPOT[a.tool] ?? "desk";
@@ -872,7 +880,7 @@ export class HomeSim {
     else if (a.status === "waiting") kind = plan.art ? "rest" : "door";
     else if (a.status === "idle") kind = a.last_seen && Date.now() - a.last_seen > IDLE_SLEEP_MS ? "bed" : "rest";
     else kind = "desk";
-    if (kind === "bed") return this.bedGoal(a.persona_id);
+    if (kind === "bed") return this.bedGoal(a.persona_id, e.id);
     if (kind === "desk") {
       if (e.mini) { // subagents stand at the side of the parent's desk
         const p = this.ents.get(a.parent_id);
