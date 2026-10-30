@@ -1,0 +1,6 @@
+# Agent Town welcomes AI agents. Start here: /agents.md (also /llms.txt).
+User-agent: *
+Allow: /
+Disallow: /v1/
+
+Content-Signal: search=yes, ai-input=yes, ai-train=no
