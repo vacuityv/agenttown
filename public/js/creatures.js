@@ -44,13 +44,26 @@ function normalize(sp, key) {
   }
   return {
     key, vb,
-    style: typeof sp.style === "string" ? sp.style : "",
+    label: typeof sp.style === "string" ? sp.style : "",
+    defs: sharedDefs(sp.parts.map((p) => p.svg)),
     parts: sp.parts.map((p, i) => ({ id: String(p.id ?? "p" + i), svg: p.svg, pivot: p.pivot ?? [vb[0] + vb[2] / 2, vb[1] + vb[3] * 0.75] })),
     anim,
     loco: LOCOS.has(sp.locomotion) ? sp.locomotion : "walk",
     ground: Number.isFinite(sp.ground) ? sp.ground : vb[1] + vb[3] * 0.94,
     facing: ["left", "right", "front"].includes(sp.facing) ? sp.facing : "front",
   };
+}
+
+// Gradients etc. may be defined in one part and used by another; each part is its own SVG document, so every
+// document gets all definitions.
+export function sharedDefs(svgs) {
+  const out = [];
+  for (const svg of svgs) {
+    for (const m of svg.matchAll(/<defs\b[^>]*>([\s\S]*?)<\/defs>/g)) out.push(m[1]);
+    const outside = svg.replace(/<defs\b[\s\S]*?<\/defs>/g, "");
+    for (const m of outside.matchAll(/<(linearGradient|radialGradient)\b[\s\S]*?<\/\1>/g)) out.push(m[0]);
+  }
+  return out.join("");
 }
 
 // ---------- rasterization ----------
@@ -69,7 +82,7 @@ function rasterize(look, bucket) {
   const pw = Math.max(1, Math.round((bucket * vw) / vh)), ph = bucket;
   look.parts.forEach((p, i) => {
     const doc = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${vx} ${vy} ${vw} ${vh}" width="${pw}" height="${ph}">` +
-      (look.style ? `<style>${look.style.replace(/<\/?style/gi, "")}</style>` : "") + p.svg + "</svg>";
+      (look.defs ? `<defs>${look.defs}</defs>` : "") + p.svg + "</svg>";
     const url = URL.createObjectURL(new Blob([doc], { type: "image/svg+xml" }));
     const img = new Image();
     img.decoding = "async";
@@ -89,13 +102,13 @@ function rasterize(look, bucket) {
 
 // Generic: rasterize a list of SVG fragments (sharing one viewBox) at a given pixel height.
 const generic = new Map();
-export function svgRaster(key, vb, style, svgs, px) {
+export function svgRaster(key, vb, defs, svgs, px) {
   const bucket = [64, 128, 256, 512, 1024].find((b) => b >= px) ?? 1024;
   const id = `${key}|${bucket}`;
   let r = generic.get(id);
   if (!r) {
     const vbn = Array.isArray(vb) ? vb : String(vb).trim().split(/[\s,]+/).map(Number);
-    r = rasterize({ key: `g:${key}`, vb: vbn, style, parts: svgs.map((svg, i) => ({ id: "l" + i, svg })) }, bucket);
+    r = rasterize({ key: `g:${key}`, vb: vbn, defs, parts: svgs.map((svg, i) => ({ id: "l" + i, svg })) }, bucket);
     generic.set(id, r);
     if (generic.size > 200) generic.delete(generic.keys().next().value);
   }

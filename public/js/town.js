@@ -37,11 +37,14 @@ function glowImage() {
 
 const STONES = ["round", "cross", "obelisk", "flat"];
 const META_KEYS = ["dwelling", "style", "art", "art_status"];
+const demoOverride = new Map(); // dev-only (?demo=…): wins over what the server says
 function applyMeta(h) {
   const m = {};
   for (const k of META_KEYS) if (k in h) m[k] = h[k];
+  Object.assign(m, demoOverride.get(h.id) ?? {});
   if (Object.keys(m).length) setHomeMeta(h.id, m);
 }
+function overrideMeta(id, m) { demoOverride.set(id, { ...(demoOverride.get(id) ?? {}), ...m }); setHomeMeta(id, m); }
 
 function drawHeadstone(ctx, x, y, s, shape, fresh) {
   ctx.save();
@@ -652,13 +655,15 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       graves.list = names.map((name, i) => ({ id: "t" + i, name, kind: i % 2 ? "codex" : "claude-code", home_name: "Old Mill", born_at: Date.now() - (40 - i) * 86400_000, died_at: Date.now() - (18 - i) * 86400_000, epitaph: i % 3 ? "Shipped it." : "Ran out of context, never out of kindness.", sprite: null }));
       graves.total = graves.list.length;
     }
-    if (demo.has("styles")) homes.forEach((e, i) => e && setHomeMeta(e.home.id, { style: RENDER_STYLES[i % RENDER_STYLES.length] }));
-    if (demo.has("art")) import("./demo-fixtures.js").then(({ ART_FIXTURES }) => {
-      ART_FIXTURES.forEach((art, i) => { const e = homes[i + 1]; if (e) setHomeMeta(e.home.id, { art, art_status: "ready", style: "storybook" }); });
+    if (demo.has("styles")) homes.forEach((e, i) => e && overrideMeta(e.home.id, { style: RENDER_STYLES[i % RENDER_STYLES.length] }));
+    if (demo.has("art")) fetch("/js/demo-dwellings.json").then((r) => r.json()).then((list) => {
+      // real Claude-generated samples (data/dwelling-v1), assigned to the first homes on the map
+      let i = 0;
+      for (const e of homes) { if (!e || i >= list.length) continue; overrideMeta(e.home.id, { art: list[i].art, art_status: "ready" }); e.home.description = list[i].look; i++; }
     });
     if (demo.has("dwell")) {
       const kinds = ["house", "cottage", "fenced-yard", "tent", "treehouse", "burrow", "greenhouse", "pond", "boat", "cave", "mushroom-ring", "lighthouse", "garden", "shed"];
-      homes.forEach((e, i) => e && setDwelling(e.home.id, kinds[i % kinds.length]));
+      homes.forEach((e, i) => e && overrideMeta(e.home.id, { dwelling: kinds[i % kinds.length] }));
     }
     if (demo.has("say")) {
       const lines = ["Tests are green!", "Who moved my semicolon?", "Brb, compiling…", "This bug is a feature now.", "咖啡续上了", "Ship it?"];

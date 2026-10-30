@@ -13,7 +13,7 @@ import { lookFor, drawV2 } from "./creatures.js";
 import { hash32, rng, offscreen, clamp, BUSY } from "./util.js";
 import { shade } from "./art.js";
 import { RENDER_STYLES, isRenderStyle, styledCanvas } from "./paint.js";
-import { svgRaster } from "./creatures.js";
+import { svgRaster, sharedDefs } from "./creatures.js";
 
 export const WALL = 3;
 export const IDLE_SLEEP_MS = 3 * 60_000;
@@ -604,7 +604,7 @@ export function validArt(a) {
   if (!a || typeof a !== "object" || a.v !== 1) return false;
   const vb = String(a.viewBox ?? "").trim().split(/[\s,]+/).map(Number);
   if (vb.length !== 4 || vb.some((n) => !Number.isFinite(n)) || vb[2] <= 0 || vb[3] <= 0) return false;
-  if (!Array.isArray(a.layers) || !a.layers.length || a.layers.length > 8) return false;
+  if (!Array.isArray(a.layers) || a.layers.length < 2 || a.layers.length > 10) return false;
   return a.layers.every((l) => l && typeof l.svg === "string" && l.svg.length <= 80_000);
 }
 
@@ -626,11 +626,13 @@ function planFromArt(homeId, art, style) {
   const foot = Array.isArray(art.footprint) && art.footprint.filter(ok).length >= 3 ? art.footprint.filter(ok).map(T) : [[0, 0], [W, 0], [W, H], [0, H]];
   const xs = foot.map((p) => p[0]), ys = foot.map((p) => p[1]);
   const ext = { x0: Math.min(0, ...xs) - 2, y0: Math.min(0, ...ys) - 2, x1: Math.max(W, ...xs) + 2, y1: Math.max(H, ...ys) + 2 };
-  const layers = art.layers.map((l, i) => ({ id: String(l.id ?? "l" + i), svg: l.svg, roof: l.id === "roof" || !!l.optional }));
-  const anim = (Array.isArray(art.anim) ? art.anim : []).slice(0, 16).map((a) => ({
+  // every layer carries its own pivot for its animations; only `optional` layers (the roof) are far-zoom only
+  const layers = art.layers.map((l, i) => ({ id: String(l.id ?? "l" + i), svg: l.svg, roof: !!l.optional, pivot: ok(l.pivot) ? T(l.pivot) : [W / 2, H / 2] }));
+  const pivotOf = new Map(layers.map((l) => [l.id, l.pivot]));
+  const anim = (Array.isArray(art.anim) ? art.anim : []).slice(0, 12).map((a) => ({
     layer: String(a.layer ?? ""), type: String(a.type ?? ""), amp: Number.isFinite(a.amp) ? a.amp : 3,
     period: Number.isFinite(a.period) && a.period > 0.05 ? a.period : 2, phase: Number.isFinite(a.phase) ? a.phase : 0,
-    pivot: ok(a.pivot) ? T(a.pivot) : [W / 2, H / 2],
+    pivot: pivotOf.get(String(a.layer ?? "")) ?? [W / 2, H / 2],
   }));
   const h = hash32(homeId);
   const spots = {
@@ -641,7 +643,8 @@ function planFromArt(homeId, art, style) {
   for (const kk of Object.keys(spots)) if (!spots[kk]) delete spots[kk];
   return {
     id: homeId, kind: "art", open: true, blob: foot, rstyle: style ?? "flat", seed: h, W, H, mirror: false,
-    art: { key: "art:" + hash32(JSON.stringify(art)), vb: vb.join(" "), style: typeof art.style === "string" ? art.style : "", layers, anim },
+    art: { key: "art:" + hash32(JSON.stringify(art)), vb: vb.join(" "), label: typeof art.style === "string" ? art.style : "", defs: sharedDefs(layers.map((l) => l.svg)), layers, anim },
+    charK: (13 * k) / 32, // residents ~13 viewBox units tall, as the art is designed for
     rooms: { O: [0, 0, W, H] }, gaps: [], doors: {}, front: [door[0] - 7, door[1] - 3, 14], frontPt: door,
     desks: desks.map(([x, y]) => [x - 10, y]), beds: bedPts.map(([x, y]) => ({ x: x - 5, y: y - 9 })),
     furn: {}, spots, extras: { windows: [] }, style: { blankets: BLANKETS.slice(0, 4), wall: { c: "#d8c8b0" } },
@@ -668,7 +671,7 @@ function layerTransform(list, tSec) {
 // Draw a Claude-generated dwelling. roof: true at far zoom (shows the optional roof layer).
 export function drawArtLayers(ctx, plan, X0, Y0, s, t, roof) {
   const a = plan.art;
-  const r = svgRaster(a.key, a.vb, a.style, a.layers.map((l) => l.svg), plan.H * s);
+  const r = svgRaster(a.key, a.vb, a.defs, a.layers.map((l) => l.svg), plan.H * s);
   if (!r) { // still loading: soft footprint
     ctx.fillStyle = "rgba(220, 200, 170, 0.35)";
     ctx.beginPath(); plan.blob.forEach(([x, y], i) => (i ? ctx.lineTo(X0 + x * s, Y0 + y * s) : ctx.moveTo(X0 + x * s, Y0 + y * s))); ctx.closePath(); ctx.fill();
@@ -684,7 +687,7 @@ export function drawArtLayers(ctx, plan, X0, Y0, s, t, roof) {
     const anims = a.anim.filter((q) => q.layer === l.id);
     if (anims.length) {
       const x = layerTransform(anims, tSec);
-      const [px, py] = anims[0].pivot;
+      const [px, py] = l.pivot;
       ctx.save();
       ctx.translate(X0 + (px + x.tx) * s, Y0 + (py + x.ty) * s);
       ctx.rotate((x.rot * Math.PI) / 180); ctx.scale(x.sx, x.sy);
@@ -864,7 +867,7 @@ export class HomeSim {
     if (a.status === "tool") kind = TOOL_SPOT[a.tool] ?? "desk";
     if (kind !== "desk" && kind && !["door", "rest", "bed"].includes(kind) && !plan.spots[kind]?.pts?.length) kind = "desk";
     else if (a.status === "thinking") kind = "desk";
-    else if (a.status === "waiting") kind = "door";
+    else if (a.status === "waiting") kind = plan.art ? "rest" : "door";
     else if (a.status === "idle") kind = a.last_seen && Date.now() - a.last_seen > IDLE_SLEEP_MS ? "bed" : "rest";
     else kind = "desk";
     if (kind === "bed") return this.bedGoal(a.persona_id);
@@ -999,7 +1002,7 @@ export class HomeSim {
   }
 
   drawResident(ctx, e, persona, X0, Y0, s, t, now, reduced, bed) {
-    const k = K * (e.mini ? MINI : 1);
+    const k = (this.plan.charK ?? K) * (e.mini ? MINI : 1);
     let pop = 1;
     if (e.dying) { const p = clamp((now - e.dying) / POP_MS, 0, 1); pop = 1 - p * p; }
     else if (now - e.born < SPAWN_MS) { const p = (now - e.born) / SPAWN_MS; const c1 = 1.70158; pop = 1 + (c1 + 1) * (p - 1) ** 3 + c1 * (p - 1) ** 2; }
@@ -1075,7 +1078,7 @@ export class HomeSim {
   hitTest(ax, ay) {
     let best = null;
     for (const e of this.ents.values()) {
-      const k = K * (e.mini ? MINI : 1), h = 32 * k;
+      const k = (this.plan.charK ?? K) * (e.mini ? MINI : 1), h = 32 * k;
       const bed = e.pose === "sleep" ? e.target?.bed : null;
       const top = e.pose === "seat" ? e.y - 24 * k : bed ? bed.y + 1 : e.y - h;
       const bottom = e.pose === "seat" ? e.y : bed ? bed.y + 13 : e.y;
