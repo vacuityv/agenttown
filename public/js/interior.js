@@ -993,7 +993,8 @@ export class HomeSim {
         const top = this.drawResident(ctx, e, persona, X0, Y0, s, t, now, reduced, bed);
         if (bed && !plan.art) {
           const bi = plan.beds.indexOf(bed);
-          ctx.drawImage(blanketImg(plan.style.blankets[bi % 4], plan.kind), P(X0 + (bed.x + 1) * s), P(Y0 + (bed.y + 7) * s), P(9 * s), P(22 * s));
+          // Tuck in from the chest down so the face stays visible on the pillow.
+          ctx.drawImage(blanketImg(plan.style.blankets[bi % 4], plan.kind), P(X0 + (bed.x + 1) * s), P(Y0 + (bed.y + 14) * s), P(9 * s), P(15 * s));
         }
         if (top != null) anchors.push({ ent: e, persona, x: X0 + e.x * s, y: top });
       } });
@@ -1004,7 +1005,9 @@ export class HomeSim {
   }
 
   drawResident(ctx, e, persona, X0, Y0, s, t, now, reduced, bed) {
-    const k = (this.plan.charK ?? K) * (e.mini ? MINI : 1);
+    let k = (this.plan.charK ?? K) * (e.mini ? MINI : 1);
+    // In bed, shrink to the bed's width (11 units) so a big creature doesn't spill onto the next bed.
+    if (bed && e.pose === "sleep") k = Math.min(k, 14 / 32);
     let pop = 1;
     if (e.dying) { const p = clamp((now - e.dying) / POP_MS, 0, 1); pop = 1 - p * p; }
     else if (now - e.born < SPAWN_MS) { const p = (now - e.born) / SPAWN_MS; const c1 = 1.70158; pop = 1 + (c1 + 1) * (p - 1) ** 3 + c1 * (p - 1) ** 2; }
