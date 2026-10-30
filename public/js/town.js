@@ -591,11 +591,10 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         const anchors = sim.sim.draw(ctx, R(X0), R(Y0), s, t, { reduced, now: t });
         const st = sim.sim.stats();
         awake = st.awake; busy = st.busy;
-        const hovered = hover?.idx === k;
         for (const a of anchors) {
           if (a.ent.say && a.ent.say.until > t) { bubbles.push({ a, say: true }); continue; }
           if (a.ent.sleeper || a.ent.pose === "sleep") { zzz.push([a.x + 3 * s, a.y + 2 * s, a.ent.seed]); continue; }
-          if (cam.zoom >= 2 || hovered) bubbles.push({ a, mine: o?.home.id === e.home.id, homeId: e.home.id });
+          bubbles.push({ a, mine: o?.home.id === e.home.id, homeId: e.home.id }); // always on, no hover needed
         }
       } else if (detail) {
         placeholder(e.home.id).draw(ctx, R(X0), R(Y0), s, t, { reduced, now: t });
@@ -733,7 +732,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     let text;
     if (b.say) text = `“${truncate(e.say.text, cam.zoom >= 3 ? 46 : 26)}”`;
     else {
-      text = e.a.status === "tool" ? (e.a.tool || tr("st.toolGeneric")) : e.a.status === "thinking" ? "…" : e.a.status === "waiting" ? "?" : e.ending ? tr("st.bye") : "";
+      text = e.a.status === "tool" ? truncate(e.a.tool || tr("st.toolGeneric"), cam.zoom >= 2 ? 24 : 10)
+        : e.a.status === "thinking" ? "…" : e.a.status === "background" ? "⏳" : e.a.status === "waiting" ? "?" : e.ending ? tr("st.bye") : "";
       if (!text) return;
       if (b.mine && e.a.task_enc && cam.zoom >= 3) {
         const title = titleFor(b.homeId, e.a.task_enc);
