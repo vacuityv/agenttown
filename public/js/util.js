@@ -1,5 +1,14 @@
 // Small shared helpers. Never put server-provided strings into innerHTML — use el()/textContent.
 
+// DOM append/prepend/replaceChildren turn null into the text "null". Our UI passes `cond ? node : null` everywhere
+// (as el() allows), so make the native methods skip null/undefined/false too.
+for (const proto of [Element.prototype, DocumentFragment.prototype]) {
+  for (const m of ["append", "prepend", "replaceChildren"]) {
+    const orig = proto[m];
+    proto[m] = function (...nodes) { return orig.apply(this, nodes.filter((n) => n != null && n !== false)); };
+  }
+}
+
 export function el(tag, attrs = {}, ...children) {
   const n = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs)) {
