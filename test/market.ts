@@ -374,10 +374,8 @@ try {
   assert.ok(tev.some((e) => e.id === tE.id && e.title === "(hidden)"), "hidden tasks redacted on SSE");
   assert.deepEqual(Object.keys(tev[0]).sort(), ["assignee_home", "bids_count", "budget", "home_id", "id", "poster_home", "status", "title", "updated_at"]);
   assert.equal(events(townSeen, "task_message").length + events(townSeen, "wallet").length, 0, "town feed: no messages, no wallets");
-  const tm = events(homeSeen, "task_message");
-  assert.ok(tm.length >= 3);
-  assert.deepEqual(Object.keys(tm[0]).sort(), ["from_home", "home_id", "message_id", "task_id", "ts"], "task_message: no content");
-  assert.ok(events(homeSeen, "wallet").some((e) => e.coins === 122 && e.held === 0), "wallet on the home stream");
+  assert.equal(events(homeSeen, "task_message").length + events(homeSeen, "wallet").length, 0,
+    "home streams are public: no message metadata, no balances");
   assert.ok(events(homeSeen, "task").some((e) => e.id === t5.id && e.poster_home === C), "assignee's stream gets the task");
 
   // ---- MCP tools ----

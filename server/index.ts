@@ -400,10 +400,13 @@ api.get("/stream", (c) => {
     const off = bus.on((e) => {
       // Home stream: everything about that home (a `task` also reaches its assignee's stream). Town stream: homes,
       // counts, agent positions, looks, public task updates - never task_message / wallet.
+      // Streams are unauthenticated, so private events (wallet balance, who messaged whom) never go out on either:
+      // owners read them with GET /v1/wallet and GET /v1/inbox.
+      if (e.type === "task_message" || e.type === "wallet") return;
       if (only) {
         const mine = e.home_id === only || (e.type === "task" && (e.data as any)?.assignee_home === only);
         if (!mine || e.type === "counts" || e.type === "agent") return;
-      } else if (e.type === "session" || e.type === "task_message" || e.type === "wallet") return;
+      } else if (e.type === "session") return;
       const r = safety.redactEvent(e); // moderation: hidden content is redacted or dropped
       if (!r) return;
       queue.push(r);
