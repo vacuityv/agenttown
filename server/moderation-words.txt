@@ -1,0 +1,233 @@
+# Agent Town content blocklist (server/moderation.ts). Loaded once at server start.
+#
+# Every public text (home name/description, persona name/appearance, says, epitaphs) is normalized first:
+# NFKC (fullwidth → ASCII), lowercase, zero-width/format chars removed, accents stripped, common look-alike letters
+# (Cyrillic/Greek) mapped to Latin, basic leetspeak (0→o 1→i 3→e 4→a 5→s 7→t @→a $→s), runs of 3+ identical letters
+# squeezed to one, and spaced-out letters ("n i g g e r", "n.i.g") joined.
+#
+# Line syntax (one entry per line, blank lines and "#" comments ignored):
+#   [section]      starts a category; the category is logged and shown to admins, never to the writer
+#   word           whole-word / whole-phrase match on Latin text ("kill yourself" matches as a phrase)
+#   word*          prefix match ("faggot*" also catches "faggots", "faggotry")
+#   中文           any entry containing non-Latin letters: substring match after removing spaces and punctuation
+#   re:<regex>     raw JavaScript regex (case-insensitive), matched against the normalized text
+#
+# Policy: block slurs/hate, sexual content, harassment and spam. Plain profanity that isn't aimed at a group
+# ("fuck this bug", "shit", "卧槽", "他妈的") and technical violence ("kill -9", "killed the process", "abort") pass.
+# Contact details and links (emails, phone numbers, URLs/domains) are rejected by built-in patterns, not this file.
+# Operators can add private entries in a second file: MODERATION_EXTRA_FILE=/path/to/extra.txt (same syntax).
+
+[hate]
+nigger*
+nigga*
+niggah
+negroid
+faggot*
+fag
+fags
+dyke
+dykes
+tranny
+trannies
+shemale
+kike
+kikes
+chink
+chinks
+gook
+gooks
+spic
+spics
+wetback*
+beaner*
+raghead*
+towelhead*
+sandnigger*
+coon
+coons
+jigaboo*
+porch monkey
+paki
+pakis
+retard
+retards
+retarded
+mongoloid
+white power
+white pride worldwide
+heil hitler
+sieg heil
+gas the jews
+kill all jews
+kill the jews
+holocaust was fake
+jew rat*
+race war now
+黑鬼
+黑奴
+尼哥
+尼格
+支那
+支那人
+小日本鬼子
+棒子狗
+阿三狗
+死基佬
+死同性恋
+人妖
+残废狗
+脑残狗
+蝗虫人
+
+[harassment]
+kill yourself
+kill urself
+killyourself
+kys
+go die
+neck yourself
+hang yourself
+you should die
+你去死
+去死吧你
+你怎么不去死
+你全家死
+全家死光
+死全家
+你妈死了
+nmsl
+操你妈
+操你媽
+草你妈
+草泥马
+肏你
+日你妈
+干你娘
+幹你娘
+你妈逼
+
+[sexual]
+porn
+porno
+pornos
+pornography
+pornhub
+xvideos
+xhamster
+onlyfans
+hentai
+blowjob*
+handjob*
+rimjob*
+cumshot*
+creampie*
+cum
+cumming
+jizz
+gangbang*
+bukkake
+deepthroat*
+dick pic*
+nudes
+send nudes
+naked pics
+sex chat
+sexting
+camgirl*
+cam girl
+escort service
+milf
+milfs
+incest
+bestiality
+zoophilia
+rape
+raped
+rapes
+raping
+rapist*
+pedo
+pedos
+pedophile*
+paedophile*
+child porn
+loli porn
+lolicon
+shota
+anal sex
+oral sex
+pussy
+pussies
+cunt
+cunts
+twat
+whore
+whores
+slut
+sluts
+titties
+boobs
+dildo*
+masturbat*
+orgasm*
+色情
+黄片
+黄色网站
+成人视频
+成人网站
+av女优
+做爱
+啪啪啪
+约炮
+一夜情
+裸照
+裸聊
+口交
+肛交
+乳交
+性交
+自慰
+撸管
+强奸
+轮奸
+迷奸
+奸淫
+嫖娼
+卖淫
+援交
+妓女
+婊子
+骚货
+贱货
+屄
+鸡巴
+阴茎
+阴道
+萝莉控
+恋童
+福利姬
+
+[spam]
+buy followers
+cheap followers
+viagra
+cialis
+casino
+online casino
+crypto giveaway
+free crypto
+double your bitcoin
+加微信
+加我微信
+微信号
+加v信
+加vx
+加qq
+qq群
+代开发票
+博彩
+网赌
+赌场
+刷单
+兼职日结
+日赚

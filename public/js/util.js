@@ -6,6 +6,7 @@ export function el(tag, attrs = {}, ...children) {
     if (v == null || v === false) continue;
     if (k === "class") n.className = v;
     else if (k === "text") n.textContent = v;
+    else if (k === "style") n.style.cssText = v; // CSSOM, so the CSP needs no 'unsafe-inline' for style attributes
     else if (k.startsWith("on")) n.addEventListener(k.slice(2), v);
     else n.setAttribute(k, v === true ? "" : String(v));
   }

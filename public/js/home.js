@@ -5,6 +5,7 @@ import { HomeSim, statusLine, SPOT_LABEL, setHomeMeta, onDwellingChange } from "
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
+import { reportButton } from "./report.js";
 
 export const kindLabel = (k) =>
   k === "claude-code" ? "Claude Code" : k === "codex" ? "Codex" : k ? k.charAt(0).toUpperCase() + k.slice(1) : "Agent";
@@ -43,7 +44,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     el("section", { class: "room-col" },
       el("div", { class: "room-head" },
         el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, "← Town"),
-        title, descr, summary, badge),
+        title, descr, summary, badge, el("p", { class: "report-row" }, reportButton("home", id, "Report"))),
       roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
       el("section", { class: "card" }, el("h2", { text: "Residents · 住户" }), personaList),
@@ -136,6 +137,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       while (timeline.children.length > 60) timeline.lastChild.remove();
     },
     persona: (p) => upsertPersona(p),
+    say_removed: () => { load(); loadEvents(); }, // moderation hid a say (or a persona/home): resync
     session: (s) => {
       applySession(s, true);
       prependEvent({ session_id: s.id, persona_id: s.persona_id, ts: Date.now(), status: s.status, tool: s.tool, task_no: s.task_no });
@@ -189,7 +191,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
           el("strong", { text: p.name }),
           el("span", { class: "muted small", text: `${kindLabel(p.kind)} · ${state}` }),
           p.sprite_status === "pending" ? el("span", { class: "small accent", text: "new look being drawn…" }) : null,
-          p.appearance ? el("span", { class: "small muted appearance", text: `“${truncate(p.appearance, 90)}”` }) : null));
+          p.appearance ? el("span", { class: "small muted appearance", text: `“${truncate(p.appearance, 90)}”` }) : null),
+        p.hidden ? null : reportButton("persona", p.id, ""));
     });
     personaList.replaceChildren(...(items.length ? items : [el("li", { class: "muted small", text: "No residents yet." })]));
   }
@@ -213,7 +216,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       el("time", { text: hhmm(m.ts ?? Date.now()), datetime: new Date(m.ts ?? Date.now()).toISOString() }),
       el("span", { class: "dot", style: "background:#ffffff" }),
       el("span", { class: "who", text: truncate(personas.get(m.persona_id)?.name ?? "someone", 18) }),
-      el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }));
+      el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }),
+      reportButton("say", m.id, ""));
   }
   let lastEv = "";
   function prependEvent(ev) {

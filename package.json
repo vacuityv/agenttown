@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.ts",
     "dev": "node --disable-warning=ExperimentalWarning --watch server/dev.ts",
-    "test": "node --disable-warning=ExperimentalWarning test/smoke.ts && node --disable-warning=ExperimentalWarning test/town.ts",
+    "test": "node --disable-warning=ExperimentalWarning test/smoke.ts && node --disable-warning=ExperimentalWarning test/town.ts && node --disable-warning=ExperimentalWarning test/moderation.ts",
     "test:hooks": "node --disable-warning=ExperimentalWarning test/hooks.ts",
     "sync:plugins": "node scripts/sync-plugins.mjs"
   },

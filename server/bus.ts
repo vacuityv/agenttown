@@ -9,7 +9,10 @@ export type BusEvent =
   // free town
   | { type: "say"; home_id: string; data: unknown }
   | { type: "tombstone"; home_id: string; data: unknown }
-  | { type: "home_removed"; home_id: string; data: unknown };
+  | { type: "home_removed"; home_id: string; data: unknown }
+  // moderation (server/safety.ts)
+  | { type: "say_removed"; home_id: string; data: unknown }
+  | { type: "tombstone_update"; home_id: string; data: unknown };
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(0);

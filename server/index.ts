@@ -2,14 +2,17 @@ import { readFileSync } from "node:fs";
 import { Hono, type Context } from "hono";
 import { serve } from "@hono/node-server";
 import { serveStatic } from "@hono/node-server/serve-static";
-import { getConnInfo } from "@hono/node-server/conninfo";
 import { streamSSE } from "hono/streaming";
 import { bodyLimit } from "hono/body-limit";
-import { INVITE_TTL_MS, PORT, POW_DIFFICULTY, PUBLIC_URL, TRUST_PROXY } from "./config.ts";
+import { INVITE_TTL_MS, PORT, POW_DIFFICULTY, PUBLIC_URL } from "./config.ts";
 import { bus, type BusEvent } from "./bus.ts";
 import * as store from "./store.ts";
 import { startAvatarWorker } from "./avatar.ts";
 import { initDb } from "./db.ts";
+// moderation & hardening
+import { apiRateLimit, clientIp, securityHeaders, sseAcquire } from "./hardening.ts";
+import { assertAllowed } from "./moderation.ts";
+import * as safety from "./safety.ts";
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
 } from "./util.ts";
@@ -21,14 +24,13 @@ type Env = {
 };
 const app = new Hono<Env>();
 
+app.use("*", securityHeaders); // CSP, nosniff, no-referrer, ... (server/hardening.ts)
+
 app.onError((err, c) => {
   if (err instanceof ApiError) return c.json({ error: err.code, message: err.message }, err.status as any);
   console.error(err);
   return c.json({ error: "internal", message: "Internal error" }, 500);
 });
-
-const clientIp = (c: Context) =>
-  (TRUST_PROXY && c.req.header("x-real-ip")) || getConnInfo(c).remote.address || "unknown";
 
 function limit(key: string, perSec: number, burst: number) {
   if (!allow(key, perSec, burst)) throw new ApiError(429, "rate_limited", "Slow down.");
@@ -45,8 +47,10 @@ async function body(c: Context): Promise<Record<string, any>> {
 const requireAuth = async (c: Context<Env>, next: () => Promise<void>) => {
   const token = c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ?? "";
   if (!AUTH_TOKEN_RE.test(token)) throw new ApiError(401, "unauthorized", "Missing or malformed bearer token.");
-  const auth = await store.authByHash(sha256hex(token));
+  const hash = sha256hex(token);
+  const auth = await store.authByHash(hash);
   if (!auth) throw new ApiError(401, "unauthorized", "Unknown or revoked token.");
+  if (c.req.method !== "GET") safety.assertNotBanned(hash, auth.home.id); // moderation: banned homes can't write
   c.set("home", { id: auth.home.id, name: auth.home.name });
   c.set("scope", auth.scope);
   c.set("device_id", auth.device_id);
@@ -86,6 +90,7 @@ function optText(v: unknown, max: number, code: string): string | null | undefin
 }
 
 const api = new Hono<Env>();
+api.use("*", apiRateLimit); // generous per-IP limit across /v1 (server/hardening.ts)
 api.use("*", bodyLimit({ maxSize: 16 * 1024, onError: (c) => c.json({ error: "too_large" }, 413) }));
 
 // ---- registration ----
@@ -103,6 +108,8 @@ api.post("/register", async (c) => {
   if (typeof b.auth_token !== "string" || !AUTH_TOKEN_RE.test(b.auth_token)) {
     throw new ApiError(400, "bad_auth_token", "auth_token must be 64 lowercase hex chars.");
   }
+  safety.assertNotBanned(sha256hex(b.auth_token));
+  assertAllowed("home_name", name);
   if (typeof b.challenge !== "string" || typeof b.nonce !== "string" || !verifyPow(b.challenge, b.nonce, POW_DIFFICULTY)) {
     throw new ApiError(400, "bad_pow", "Invalid, expired or reused proof-of-work.");
   }
@@ -144,6 +151,7 @@ api.patch("/home", requireAuth, async (c) => {
   }
   const description = optText(b.description, 200, "bad_description");
   if (description !== undefined) patch.description = description;
+  assertAllowed("home", patch.name, patch.description);
   if (!Object.keys(patch).length) throw new ApiError(400, "empty_patch", "Send at least one of name, dwelling, style, description.");
   limit(`homeedit:${home.id}`, 10 / 3600, 10);
   return c.json({ home: await store.customizeHome(home.id, patch) });
@@ -162,6 +170,7 @@ api.post("/personas", requireAuth, async (c) => {
   const b = await body(c);
   const { name, kind } = personaFields(b);
   const appearance = b.appearance === undefined ? null : cleanText(b.appearance, 200);
+  assertAllowed("persona", name, appearance);
   return c.json({ persona: await store.upsertPersona(home.id, name, kind, appearance) });
 });
 
@@ -170,6 +179,7 @@ api.post("/report", requireAuth, async (c) => {
   limit(`report:${home.id}`, 20, 120);
   const b = await body(c);
   const persona = personaFields(b.persona);
+  assertAllowed("persona", persona.name); // a report can create the persona
   const session = typeof b.session === "string" && /^[\w.:-]{1,128}$/.test(b.session) ? b.session : null;
   if (!session) throw new ApiError(400, "bad_session", "session must match [\\w.:-]{1,128}.");
   const parent = typeof b.parent === "string" && /^[\w.:-]{1,128}$/.test(b.parent) ? b.parent : null;
@@ -196,6 +206,7 @@ api.post("/say", requireAuth, async (c) => {
   const persona = personaFields(b.persona);
   const text = optText(b.text, 140, "bad_text");
   if (!text) throw new ApiError(400, "bad_text", "text is required (1-140 chars).");
+  assertAllowed("say", text);
   const out = await store.say(home.id, persona.name, text, (personaId) => {
     limit(`say:p:${personaId}`, 1 / 30, 1);
     limit(`say:h:${home.id}`, 30 / 3600, 30);
@@ -207,6 +218,7 @@ async function retire(c: Context<Env>, ref: { id?: string; name?: string }) {
   const home = c.get("home");
   limit(`retire:${home.id}`, 10 / 3600, 10);
   const epitaph = optText((await optBody(c)).epitaph, 140, "bad_epitaph") ?? null;
+  assertAllowed("epitaph", epitaph);
   return c.json({ tombstone: await store.retirePersona(home.id, ref, epitaph) });
 }
 api.delete("/personas/:id", requireAuth, (c) => retire(c, { id: c.req.param("id") ?? "" }));
@@ -221,6 +233,7 @@ api.delete("/home", requireAuth, ownerOnly, async (c) => {
   const b = await optBody(c);
   if (b.confirm !== home.id) throw new ApiError(400, "confirm_required", `Send {"confirm": "${home.id}"} to delete this home. This cannot be undone.`);
   const epitaph = optText(b.epitaph, 140, "bad_epitaph") ?? null;
+  assertAllowed("epitaph", epitaph);
   return c.json({ deleted: home.id, tombstones: await store.deleteHome(home.id, epitaph) });
 });
 
@@ -306,13 +319,15 @@ api.get("/meta", (c) => c.json({
 api.get("/cemetery", async (c) => {
   const lim = Math.min(Math.max(Number(c.req.query("limit")) || 50, 1), 200);
   const off = Math.max(Number(c.req.query("offset")) || 0, 0);
-  return c.json(await store.cemetery(lim, off));
+  const r = await store.cemetery(lim, off);
+  return c.json({ ...r, tombstones: r.tombstones.map(safety.redactTombstone) });
 });
 
 api.get("/world", async (c) => {
   const lim = Math.min(Number(c.req.query("limit")) || 500, 2000);
   const off = Math.max(Number(c.req.query("offset")) || 0, 0);
-  return c.json(await store.world(lim, off));
+  const r = await store.world(lim, off);
+  return c.json({ ...r, homes: r.homes.map(safety.redactHome) });
 });
 
 const publicHome = async (c: Context) => {
@@ -324,16 +339,16 @@ const publicHome = async (c: Context) => {
 api.get("/town", async (c) => {
   limit(`town:${clientIp(c)}`, 10, 60);
   const ids = (c.req.query("ids") ?? "").split(",").filter((s) => /^h_[0-9a-z]{4,16}$/.test(s)).slice(0, 100);
-  return c.json({ homes: await store.town(ids) });
+  return c.json({ homes: (await store.town(ids)).map(safety.redactTownHome) });
 });
 
 api.get("/homes/:id", async (c) => {
   const h = await publicHome(c);
   return c.json({
-    home: store.publicHome(h),
-    personas: await store.personasOfHome(h.id),
+    home: safety.redactHome(store.publicHome(h)),
+    personas: (await store.personasOfHome(h.id)).map(safety.redactPersona),
     sessions: await store.openSessionsOfHome(h.id),
-    says: await store.recentSays(h.id, 10),
+    says: safety.redactSays(h.id, await store.recentSays(h.id, 10)),
   });
 });
 
@@ -352,16 +367,19 @@ api.get("/homes/:id/events", async (c) => {
 // say, tombstone, home_removed).
 api.get("/stream", (c) => {
   const only = c.req.query("home");
+  const release = sseAcquire(clientIp(c)); // per-IP and global caps -> 429 (server/hardening.ts)
   return streamSSE(c, async (stream) => {
     const queue: BusEvent[] = [];
     let wake: (() => void) | null = null;
     const off = bus.on((e) => {
       // Home stream: everything about that home. Town stream: homes, counts, agent positions, looks.
       if (only ? e.home_id !== only || e.type === "counts" || e.type === "agent" : e.type === "session") return;
-      queue.push(e);
+      const r = safety.redactEvent(e); // moderation: hidden content is redacted or dropped
+      if (!r) return;
+      queue.push(r);
       wake?.();
     });
-    stream.onAbort(() => { off(); wake?.(); });
+    stream.onAbort(() => { off(); release(); wake?.(); });
     // Cloudflare drops idle connections after ~100s.
     const ping = setInterval(() => { queue.push({ type: "ping" } as any); wake?.(); }, 25_000);
     await stream.writeSSE({ event: "hello", data: JSON.stringify({ t: Date.now() }) });
@@ -377,10 +395,12 @@ api.get("/stream", (c) => {
     } finally {
       clearInterval(ping);
       off();
+      release();
     }
-  });
+  }, async (err) => { release(); console.error("stream error", err); });
 });
 
+safety.mountSafety(api); // POST /v1/reports, /v1/admin/* (server/safety.ts)
 app.route("/v1", api);
 
 // ---- static: agents.md and the CLI get the public URL baked in ----
@@ -404,6 +424,7 @@ setInterval(() => {
 
 try {
   await initDb();
+  await safety.initSafety();
 } catch (e) {
   console.error(`agenttown: database init failed: ${(e as Error).message}`);
   process.exit(1);
