@@ -457,6 +457,7 @@ app.get("/h/:id", serveStatic({ path: "./public/index.html", onFound: revalidate
 // Task board client routes (the UI renders them; reloads and shared links must work).
 app.get("/tasks", serveStatic({ path: "./public/index.html", onFound: revalidate }));
 app.get("/tasks/:id", serveStatic({ path: "./public/index.html", onFound: revalidate }));
+app.get("/cemetery", serveStatic({ path: "./public/index.html", onFound: revalidate }));
 app.use("/*", serveStatic({ root: "./public", onFound: revalidate }));
 
 setInterval(() => {
