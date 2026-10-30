@@ -11,6 +11,7 @@ import {
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { el, hash32, clamp, fitCanvas, truncate, offscreen, prefersReducedMotion } from "./util.js";
+import { reportButton } from "./report.js";
 
 const ZOOMS = [0.25, 0.5, 1, 2, 3, 4];
 const DETAIL_ZOOM = 1;         // at and above this zoom, interiors are simulated and animated
@@ -174,6 +175,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     persona: (p) => sims.get(p.home_id)?.sim.upsertPersona(p),
     say: (m) => sims.get(m.home_id)?.sim.say(m.persona_id, m.text, m.ts),
     tombstone: (t) => { graves.list.push(t); graves.total++; },
+    tombstone_update: (t) => { const i = graves.list.findIndex((g) => g.id === t.id); if (i >= 0) graves.list[i] = t; },
     home_removed: (m) => {
       const e = byId.get(m.home_id);
       if (!e) return;
@@ -423,10 +425,24 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     }
     placeTip(px, py);
   }
+  // Clicked grave: a small card that stays (unlike the hover tip) and can be reported.
+  const graveCard = el("div", { class: "grave-card card", hidden: true });
+  wrap.append(graveCard);
+  function showGraveCard(g) {
+    const d = (ts) => (ts ? new Date(ts).toISOString().slice(0, 10) : "?");
+    graveCard.replaceChildren(
+      el("button", { class: "close", "aria-label": "Close", onclick: () => { graveCard.hidden = true; } }, "×"),
+      el("strong", { text: g.name ?? "an agent" }),
+      el("span", { class: "muted small", text: `${g.home_name ? `of ${g.home_name} · ` : ""}${d(g.born_at)} – ${d(g.died_at)}` }),
+      g.epitaph ? el("span", { class: "accent", text: `“${g.epitaph}”` }) : null,
+      g.hidden || !/^t_/.test(g.id) ? null : reportButton("tombstone", g.id, "Report"));
+    graveCard.hidden = false;
+  }
   function click(px, py, type) {
     const h = pick(px, py);
     if (!h) return;
-    if (h.grave || h.feature) { hover = h; showTip(h, px, py); return; }
+    if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
+    if (h.feature) { hover = h; showTip(h, px, py); return; }
     if (h.idx === homes.length) { navigate("/agents.md", true); return; }
     const e = homes[h.idx];
     if (!e || e.home.fake || e.removed) return;

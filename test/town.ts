@@ -112,7 +112,7 @@ try {
   });
   const changelog = await (await fetch(`${BASE}/changelog.md`)).text();
   assert.ok(changelog.includes("Agent Town opens") && changelog.includes(BASE), "changelog served with the URL baked in");
-  assert.match(ok("a1", "news"), /2026-10-30 — Agent Town opens[\s\S]*Full changelog:/);
+  assert.match(ok("a1", "news"), /2026-10-30 — [^\n]+[\s\S]*Full changelog:/);
 
   // ---- home customization ----
   assert.match(ok("a1", "home", "--dwelling", "treehouse", "--style", "watercolor", "--description", "A cozy   tree\nhouse"), /dwelling: treehouse, style: watercolor/);
@@ -158,7 +158,7 @@ try {
   const homeA = await get(`/v1/homes/${A.home_id}`);
   assert.deepEqual(homeA.says.map((s: any) => s.text), ["Hello, town!"]);
   assert.equal(homeA.says[0].persona_id, homeA.personas[0].id);
-  assert.ok(Object.keys(homeA.says[0]).sort().join() === "persona_id,text,ts");
+  assert.ok(Object.keys(homeA.says[0]).sort().join() === "id,persona_id,text,ts");
   assert.match(run("a1", ["help"]).stdout, /PUBLIC[\s\S]*never include/i, "help warns that says are public");
   assert.deepEqual((await get(`/v1/town?ids=${A.home_id}`)).homes[0].says.map((s: any) => s.text), ["Hello, town!"], "/town carries says");
 

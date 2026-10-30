@@ -397,7 +397,7 @@ const saysSql = {
   prune: `
     DELETE FROM says WHERE home_id = ? AND id <= (
       SELECT id FROM (SELECT id FROM says WHERE home_id = ? ORDER BY id DESC LIMIT 1 OFFSET ${SAYS_KEPT}) x)`,
-  recent: "SELECT persona_id, text, ts FROM says WHERE home_id = ? ORDER BY id DESC LIMIT ?",
+  recent: "SELECT CAST(id AS CHAR) AS id, persona_id, text, ts FROM says WHERE home_id = ? ORDER BY id DESC LIMIT ?",
 };
 
 /** Posts a say for an existing persona. `check(personaId)` runs before the insert (rate limits). */
@@ -406,9 +406,9 @@ export async function say(homeId: string, personaName: string, text: string, che
   if (!p) throw new ApiError(404, "unknown_persona", "No persona with that name in this home. Create it first (`agenttown persona`).");
   check(p.id);
   const ts = Date.now();
-  await run(db(), saysSql.insert, [homeId, p.id, text, ts]);
+  const ins = await run(db(), saysSql.insert, [homeId, p.id, text, ts]);
   await run(db(), saysSql.prune, [homeId, homeId]);
-  const out = { persona_id: p.id as string, text, ts };
+  const out = { id: String(ins.insertId), persona_id: p.id as string, text, ts };
   bus.emit({ type: "say", home_id: homeId, data: out });
   return out;
 }

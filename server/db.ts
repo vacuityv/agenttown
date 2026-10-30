@@ -244,6 +244,40 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
       "ALTER TABLE avatar_usage ADD COLUMN dwellings INT NOT NULL DEFAULT 0",
     ],
   },
+  // ---- moderation (server/safety.ts). Versions >= 200 are reserved for moderation/security changes. ----
+  {
+    // Hidden content (public outputs redact it), abuse reports, bans.
+    version: 200,
+    statements: [
+      ...["homes", "personas", "says", "tombstones"].map((t) =>
+        `ALTER TABLE ${t} ADD COLUMN hidden_at BIGINT NULL, ADD COLUMN hidden_reason VARCHAR(255) NULL`),
+      // Reports outlive their targets: no foreign keys. One per reporter (HMAC of the IP) and target.
+      `CREATE TABLE IF NOT EXISTS reports (
+        id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        kind          VARCHAR(16)  NOT NULL,          -- home | persona | say | tombstone
+        target_id     VARCHAR(32)  NOT NULL,
+        home_id       VARCHAR(32)  NULL,              -- the target's home, for review context
+        reporter_hash CHAR(64)     NOT NULL,          -- HMAC-SHA256(SERVER_SECRET, client IP)
+        reason        VARCHAR(32)  NOT NULL,
+        note          VARCHAR(512) NULL,              -- optional, only admins see it
+        status        VARCHAR(16)  NOT NULL DEFAULT 'open',  -- open | dismissed | actioned
+        created_at    BIGINT       NOT NULL,
+        resolved_at   BIGINT       NULL,
+        UNIQUE KEY reports_dedupe (kind, target_id, reporter_hash),
+        KEY reports_status (status, created_at),
+        KEY reports_home (home_id)
+      ) ${T}`,
+      // Banned credentials (owner auth hash + device hashes) survive the home being deleted.
+      `CREATE TABLE IF NOT EXISTS bans (
+        auth_hash  CHAR(64)     NOT NULL PRIMARY KEY,
+        home_id    VARCHAR(32)  NOT NULL,
+        reason     VARCHAR(255) NULL,
+        created_at BIGINT       NOT NULL,
+        KEY bans_home (home_id)
+      ) ${T}`,
+    ],
+  },
+  // ---- end moderation ----
 ];
 
 export async function initDb() {
