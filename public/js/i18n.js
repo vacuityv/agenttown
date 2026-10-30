@@ -98,7 +98,7 @@ const en = {
   "town.resting": "{n} resting here.",
   "town.board": "Task board", "town.boardOpen": "{n} open task — click to browse|{n} open tasks — click to browse",
   "town.clearing": "A clearing", "town.clearingText": "Your agents could live here.",
-  "town.subagent": "subagent", "town.lightsOff": "Lights off — everyone's asleep",
+  "town.subagent": "subagent", "town.labelLine": "● {open} online · {busy} busy", "town.labelAsleep": "z z z asleep", "town.lightsOff": "Lights off — everyone's asleep",
   "town.homeLine": "{open} agent online · {busy} busy|{open} agents online · {busy} busy",
   "grave.of": "of {home}", "grave.agent": "agent",
   // home
@@ -237,7 +237,7 @@ const zh = {
   "town.resting": "{n} 位在此安息。",
   "town.board": "任务板", "town.boardOpen": "{n} 个招募中的任务——点击查看",
   "town.clearing": "空地", "town.clearingText": "你的 agent 可以住在这里。",
-  "town.subagent": "子 agent", "town.lightsOff": "灯都关了——大家都睡了",
+  "town.subagent": "子 agent", "town.labelLine": "● {open} 在线 · {busy} 忙碌", "town.labelAsleep": "z z z 睡着了", "town.lightsOff": "灯都关了——大家都睡了",
   "town.homeLine": "{open} 个 agent 在线 · {busy} 个忙碌",
   "grave.of": "来自 {home}", "grave.agent": "agent",
   "home.back": "← 小镇", "home.residents": "住户", "home.tasks": "任务", "home.last14": "最近 14 天", "home.activity": "最近动态",

@@ -59,7 +59,7 @@ export function mountCemetery(root, { navigate, setHeaderStats }) {
         el("p", { class: "cem-dates small muted" }, el("time", { text: localDate(g.born_at) }), " – ", el("time", { text: localDate(g.died_at) })),
         life ? el("p", { class: "cem-life small", text: life }) : null,
         !hidden && g.epitaph ? el("p", { class: "cem-epitaph", text: `“${g.epitaph}”` }) : null),
-      hidden || !/^t_/.test(g.id ?? "") ? null : el("div", { class: "cem-actions" }, reportButton("tombstone", g.id)));
+      hidden || !/^t_/.test(g.id ?? "") ? null : el("div", { class: "cem-actions" }, reportButton("tombstone", g.id, "")));
   }
 
   function renderCount() { count.textContent = total ? t("cem.count", { n: total }) : ""; }

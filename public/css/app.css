@@ -420,3 +420,8 @@ dialog input {
 .cem-actions { display: flex; justify-content: center; margin-top: 14px; }
 .cem-more { display: flex; justify-content: center; }
 @media (max-width: 640px) { .cem-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); } .cem-card .stone { min-height: 210px; } .cem-page { padding: 12px 16px; } }
+/* cemetery: reporting stays possible but out of the way — a faint ⚑ that shows on hover/focus only */
+.cem-actions { margin-top: 6px; min-height: 18px; }
+.cem-actions .report-btn { opacity: 0; color: var(--muted); font-size: 12px; transition: opacity 0.2s; }
+.cem-card:hover .cem-actions .report-btn, .cem-actions .report-btn:focus-visible { opacity: 0.6; }
+@media (hover: none) { .cem-actions .report-btn { opacity: 0.35; } }

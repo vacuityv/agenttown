@@ -706,15 +706,25 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       }
     }
 
-    ctx.font = FONT(11);
+    // Home labels: name, plus a live status line (always visible, no hover needed) once zoomed in a bit.
     for (const [e, lx, ly] of labels) {
+      ctx.font = FONT(11);
       const text = truncate(e.home.name, cam.zoom >= 2 ? 28 : 18);
+      const sub = cam.zoom >= 0.8 ? (e.open ? tr("town.labelLine", { open: e.open, busy: e.busy }) : tr("town.labelAsleep")) : "";
       const tw = ctx.measureText(text).width;
-      const ph = 17 * dpr;
+      ctx.font = FONT(9, 500);
+      const sw = sub ? ctx.measureText(sub).width : 0;
+      const w = Math.max(tw, sw), ph = (sub ? 29 : 17) * dpr;
       ctx.fillStyle = "rgba(20, 15, 28, 0.82)";
-      ctx.fillRect(R(lx - tw / 2 - 5 * dpr), R(ly - ph / 2), R(tw + 10 * dpr), R(ph));
+      ctx.fillRect(R(lx - w / 2 - 5 * dpr), R(ly - 17 * dpr / 2), R(w + 10 * dpr), R(ph));
+      ctx.font = FONT(11);
       ctx.fillStyle = e.busy ? "#ffcf6e" : e.open ? "#f3e9d2" : "#9a8fb5";
       ctx.fillText(text, lx, ly + dpr);
+      if (sub) {
+        ctx.font = FONT(9, 500);
+        ctx.fillStyle = e.busy ? "#ffdf9e" : e.open ? "#8bd3c7" : "#9a8fb5";
+        ctx.fillText(sub, lx, ly + 12 * dpr);
+      }
     }
   }
 
