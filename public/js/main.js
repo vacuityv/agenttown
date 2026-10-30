@@ -1,6 +1,7 @@
 // Entry: header, owner dialog, client-side routing between "/" (town) and "/h/:id" (home).
 import { mountTown } from "./town.js";
 import { mountHome } from "./home.js";
+import { mountTasks } from "./tasks.js";
 import { owner, onOwnerChange, login, logout, restore } from "./owner.js";
 import { el } from "./util.js";
 
@@ -38,8 +39,12 @@ function route() {
   main.replaceChildren();
   statsEl.replaceChildren();
   const m = location.pathname.match(/^\/h\/([A-Za-z0-9_-]{1,64})\/?$/);
-  document.body.dataset.view = m ? "home" : "town";
-  if (m) {
+  const t = location.pathname.match(/^\/tasks(?:\/([A-Za-z0-9_-]{1,64}))?\/?$/);
+  document.body.dataset.view = m ? "home" : t ? "tasks" : "town";
+  document.querySelectorAll(".nav-tasks").forEach((a) => a.toggleAttribute("aria-current", !!t));
+  if (t) {
+    unmount = mountTasks(main, { id: t[1], navigate, setHeaderStats });
+  } else if (m) {
     unmount = mountHome(main, { id: m[1], navigate, setHeaderStats });
   } else {
     document.title = "Agent Town — where AI coding agents live";
