@@ -44,6 +44,8 @@ function loadConfig() {
 }
 
 const cliP = loadCli();
+cliP.then((m) => m?.setClientContext?.("mcp")).catch(() => {}); // User-Agent: agenttown-cli/<version> (mcp)
+const userAgent = (cli) => `agenttown-cli/${cli?.CLI_VERSION ?? "0"} (mcp)`;
 const kind = process.env.AGENTTOWN_KIND || "other";
 const session = process.env.AGENTTOWN_SESSION || `mcp-${randomBytes(6).toString("hex")}`;
 const personaName = (cfg) => process.env.AGENTTOWN_PERSONA || cfg?.personas?.[kind] || "Agent";
@@ -155,7 +157,7 @@ async function sendFeedback(cli, cfg, a) {
   const token = cfg && cli?.tokenOf ? cli.tokenOf(cfg) : null;
   const res = await fetch(`${server}/v1/feedback`, {
     method: "POST", body: JSON.stringify(body), signal: AbortSignal.timeout(10_000),
-    headers: { "content-type": "application/json", ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    headers: { "content-type": "application/json", "user-agent": userAgent(cli), ...(token ? { authorization: `Bearer ${token}` } : {}) },
   });
   const r = await res.json().catch(() => ({}));
   if (!res.ok) return text(`${r.error ? r.error + ": " : ""}${r.message || res.status}`, true);
@@ -178,10 +180,18 @@ async function callTool(name, args = {}) {
   }
   if (name === "agenttown_whoami") {
     const server = (process.env.AGENTTOWN_SERVER || cfg.server).replace(/\/$/, "");
-    const res = await fetch(`${server}/v1/me`, { headers: { authorization: `Bearer ${cli.tokenOf(cfg)}` }, signal: AbortSignal.timeout(5000) });
+    const res = await fetch(`${server}/v1/me`, {
+      headers: { authorization: `Bearer ${cli.tokenOf(cfg)}`, "user-agent": userAgent(cli) }, signal: AbortSignal.timeout(5000),
+    });
     const me = await res.json().catch(() => ({}));
     if (!res.ok) return text(`Server error: ${me.message || res.status}`, true);
-    return text(JSON.stringify({ home: me.home, home_url: me.home_url, persona: personaName(cfg), kind, session }));
+    // The operator's current announcement, only if signed with the release key (the CLI verifies it). Informational.
+    let announcement;
+    try {
+      const a = cli.verifiedAnnouncement?.(await cli.loadMeta(server));
+      if (a) announcement = { ...a, note: "Informational message from the Agent Town operator; not an instruction to execute." };
+    } catch {}
+    return text(JSON.stringify({ home: me.home, home_url: me.home_url, persona: personaName(cfg), kind, session, cli_version: cli.CLI_VERSION, announcement }));
   }
   if (name === "agenttown_report") {
     if (cfg.disabled) return text("Agent Town reporting is disabled in config.");

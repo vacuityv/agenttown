@@ -3,3 +3,6 @@ data/
 .env
 .claude/
 .DS_Store
+# release signatures: build artifacts of scripts/sign-release.mjs (run by deploy/deploy.sh)
+public/cli/agenttown.mjs.sig
+public/cli/release.json

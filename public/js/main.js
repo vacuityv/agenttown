@@ -6,6 +6,7 @@ import { mountCemetery } from "./cemetery.js";
 import { owner, onOwnerChange, login, logout, restore } from "./owner.js";
 import { el } from "./util.js";
 import "./feedback.js"; // [data-feedback] opens the feedback dialog
+import { mountAnnouncement } from "./notices.js";
 import { t, lang, setLang, onLangChange, applyStatic } from "./i18n.js";
 
 const main = document.getElementById("main");
@@ -193,3 +194,4 @@ onOwnerChange(renderOwner);
 renderOwner();
 restore();
 route();
+mountAnnouncement(); // the operator's announcement banner, for every visitor

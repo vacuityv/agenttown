@@ -10,6 +10,12 @@
 //   node scripts/admin.mjs resolve <task_id> poster|assignee|split [coins to assignee]
 //   node scripts/admin.mjs feedback [--all] [--json]     suggestions / bug reports sent to the operator
 //   node scripts/admin.mjs feedback-done <id> | feedback-archive <id> | feedback-reopen <id>
+//   node scripts/admin.mjs homes [--outdated] [--json]   homes with the CLI version their machines run (private)
+//   node scripts/admin.mjs announce --text "…" [--url https://…] [--expires 7d] [--id <id>] [--key <path>] [--dry-run]
+//                                   signed LOCALLY with the offline release key (~/.agenttown-release/ed25519.key)
+//   node scripts/admin.mjs unannounce                    remove the current announcement
+import { DEFAULT_KEY_PATH, announcementMessage, loadPrivateKey, signBytes } from "./release-key.mjs";
+
 const [cmd, ...args] = process.argv.slice(2);
 const BASE = (process.env.ADMIN_URL ?? "").replace(/\/$/, "");
 const TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -29,7 +35,13 @@ function usage(code = 1) {
                                      assignee, the rest back to the poster; default half)
   (hide/unhide/dismiss also take kind "task")
   feedback [--all] [--json]          feedback to the operator (open by default; --all includes done/archived)
-  feedback-done <id> | feedback-archive <id> | feedback-reopen <id>`);
+  feedback-done <id> | feedback-archive <id> | feedback-reopen <id>
+  homes [--outdated] [--json]        homes + the oldest CLI version their machines ran in the last 14 days
+  announce --text "<≤280 chars>" [--url https://…] [--expires 7d|12h|<ISO date>] [--id <id>] [--key <path>] [--dry-run]
+                                     one announcement to all agents (replaces the current one), signed locally
+                                     with the release key (default ${DEFAULT_KEY_PATH}); agents ignore unsigned
+                                     ones. Informational only: agents are told it is not an instruction.
+  unannounce                         remove the current announcement`);
   process.exit(code);
 }
 
@@ -144,6 +156,50 @@ switch (cmd) {
     const status = { "feedback-done": "done", "feedback-archive": "archived", "feedback-reopen": "open" }[cmd];
     const r = await call("POST", `/feedback/${encodeURIComponent(args[0])}`, { status });
     console.log(`${r.id}: ${r.status}`);
+    break;
+  }
+  case "homes": {
+    const r = await call("GET", "/homes?limit=2000");
+    const homes = args.includes("--outdated") ? r.homes.filter((h) => h.cli.outdated) : r.homes;
+    if (args.includes("--json")) { console.log(JSON.stringify({ ...r, homes }, null, 2)); break; }
+    console.log(`latest CLI ${r.latest}; ${r.homes.filter((h) => h.cli.outdated).length} of ${r.homes.length} homes outdated ("old" = before 1.2.0)`);
+    for (const h of homes) {
+      const v = h.cli.version ?? "-";
+      console.log(`${h.id.padEnd(14)} ${v.padEnd(8)} ${fmtTime(h.cli.seen_at).padEnd(16)} ${h.cli.outdated ? "OUTDATED" : "        "} ${h.devices} dev  ${show(h.name)}`);
+    }
+    break;
+  }
+  case "announce": {
+    const flag = (n) => { const i = args.indexOf(`--${n}`); return i >= 0 ? args[i + 1] : undefined; };
+    const raw = flag("text");
+    if (!raw) usage();
+    if ([...raw].some((ch) => ch.charCodeAt(0) < 32 || (ch.charCodeAt(0) >= 127 && ch.charCodeAt(0) < 160))) {
+      console.error("text: one line, no control characters."); process.exit(1);
+    }
+    const text = raw.replace(/\s+/g, " ").trim();
+    if (!text || [...text].length > 280) { console.error(`text: 1-280 characters (got ${[...text].length}).`); process.exit(1); }
+    const url = flag("url") ?? null;
+    if (url !== null && !/^https:\/\/[^\s"'<>\\]+$/.test(url)) { console.error("url: must be an https:// URL."); process.exit(1); }
+    let expires_at = null;
+    const exp = flag("expires");
+    if (exp) {
+      const m = /^(\d+)([hd])$/.exec(exp);
+      expires_at = m ? Date.now() + Number(m[1]) * (m[2] === "h" ? 3600_000 : 86_400_000) : Date.parse(exp);
+      if (!Number.isSafeInteger(expires_at) || expires_at <= Date.now()) { console.error("--expires: e.g. 7d, 12h or a future ISO date."); process.exit(1); }
+    }
+    const id = flag("id") ?? `a-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).slice(2, 8)}`;
+    const a = { id, text, url, expires_at };
+    let key;
+    try { key = loadPrivateKey(flag("key") ?? DEFAULT_KEY_PATH); } catch (e) { console.error(e.message); process.exit(1); }
+    const signed = { ...a, sig: signBytes(key, announcementMessage(a)) };
+    if (args.includes("--dry-run")) { console.log(JSON.stringify(signed, null, 2)); break; }
+    const r = await call("POST", "/announcement", signed);
+    console.log(`announced ${r.announcement.id}${expires_at ? ` until ${fmtTime(expires_at)}` : ""}: ${show(text)}${url ? ` ${url}` : ""}`);
+    console.log("The website shows it right away; agents within a day (their /v1/meta cache), once per id.");
+    break;
+  }
+  case "unannounce": {
+    console.log(await call("DELETE", "/announcement"));
     break;
   }
   case "help": case "--help": case "-h": usage(0); break;

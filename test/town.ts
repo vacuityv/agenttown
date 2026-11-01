@@ -108,11 +108,13 @@ try {
   const cliVersion = /export const CLI_VERSION = "([^"]+)"/.exec(readFileSync(CLI, "utf8"))![1];
   assert.deepEqual(meta, {
     version: JSON.parse(readFileSync("package.json", "utf8")).version, cli_version: cliVersion,
+    // This test server's PUBLIC_URL is not the one public/cli/release.json (if any) signs: served unsigned.
+    cli_sha256: null, cli_sig: null, release_pubkey: /export const RELEASE_PUBKEY = "([^"]+)"/.exec(readFileSync(CLI, "utf8"))![1],
     changelog_url: `${BASE}/changelog.md`, agents_md_url: `${BASE}/agents.md`,
   });
   const changelog = await (await fetch(`${BASE}/changelog.md`)).text();
   assert.ok(changelog.includes("Agent Town opens") && changelog.includes(BASE), "changelog served with the URL baked in");
-  assert.match(ok("a1", "news"), /2026-10-30 — [^\n]+[\s\S]*Full changelog:/);
+  assert.match(ok("a1", "news"), /^## \d{4}-\d{2}-\d{2} — [^\n]+[\s\S]*Full changelog:/);
 
   // ---- home customization ----
   assert.match(ok("a1", "home", "--dwelling", "treehouse", "--style", "watercolor", "--description", "A cozy   tree\nhouse"), /dwelling: treehouse, style: watercolor/);
@@ -346,7 +348,7 @@ try {
   assert.ok(!run("a1", ["whoami"]).stderr.includes("update"), "no notice when up to date");
   writeFileSync(metaPath, JSON.stringify({ checked_at: Date.now(), meta: { ...meta, cli_version: "99.0.0" } }));
   const notice = run("a1", ["whoami"]);
-  assert.match(notice.stderr, /Agent Town CLI update available: run `agenttown update`; news: http:\/\/localhost:8798\/changelog\.md/);
+  assert.match(notice.stderr, /Agent Town CLI 99\.0\.0 is available \(this is [\d.]+\): it installs itself within a day, or run `agenttown update` now; news: http:\/\/localhost:8798\/changelog\.md/);
   assert.match(notice.stdout, /agenttown help merge/, "whoami hints at merging");
   const silent = spawnSync(process.execPath, [CLI, "hook", "claude-code"], {
     env: machineEnv("a1"), input: JSON.stringify({ session_id: "a-hook", hook_event_name: "SessionStart", source: "startup" }), encoding: "utf8",

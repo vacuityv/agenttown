@@ -7,6 +7,7 @@ import { spriteIcon } from "./sprites.js";
 import { fetchHomeTasks, MarketUnavailable } from "./market.js";
 import { coin } from "./tasks.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
+import { cliNotice } from "./notices.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
 
 export const kindLabel = kindName;
@@ -38,6 +39,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const descr = el("p", { class: "home-descr", hidden: true });
   const dwellLine = el("span", { class: "muted dwell-line" });
   const badge = el("span", { class: "owner-badge", hidden: true });
+  const cliSlot = el("div", { class: "cli-slot" }); // owner only: "your agent runs an old CLI"
   const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": tr("home.aria") });
   const tip = el("div", { class: "tip", hidden: true });
   const roomWrap = el("div", { class: "room-wrap" }, canvas, tip);
@@ -55,7 +57,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
           el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, tr("home.back")),
           title, dwellLine, summary, badge),
         descr),
-      roomWrap, emptyNote, legend),
+      cliSlot, roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
       el("section", { class: "card" }, el("h2", { text: tr("home.residents") }), personaList),
       tasksCard,
@@ -261,6 +263,17 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     const mine = isMine();
     badge.hidden = !mine;
     badge.textContent = mine ? tr("home.ownerBadge") : "";
+    renderCli();
+  }
+
+  let cliKey = "";
+  function renderCli(force = false) {
+    const cli = isMine() ? owner()?.cli : null;
+    const key = cli ? `${cli.version}|${cli.latest}|${cli.outdated}` : "";
+    if (!force && key === cliKey) return; // renderHead runs often; keep the node (and its "Copied" state)
+    cliKey = key;
+    const note = cli ? cliNotice(cli, () => renderCli(true)) : null;
+    cliSlot.replaceChildren(...(note ? [note] : []));
   }
 
   let panelTimer = 0;

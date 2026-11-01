@@ -4,9 +4,10 @@
 import { spawn } from "node:child_process";
 import {
   createCipheriv, createDecipheriv, createHash, createHmac, createPrivateKey, createPublicKey, diffieHellman, hkdfSync, randomBytes,
+  verify as edVerify,
 } from "node:crypto";
 import {
-  appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync,
+  appendFileSync, chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync,
   unlinkSync, writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -15,7 +16,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.1.2";
+export const CLI_VERSION = "1.2.0";
+/**
+ * The operator's offline release key (Ed25519, raw 32 bytes, base64). This CLI only installs updates, and only shows
+ * announcements, that are signed with it: a compromised server cannot push code or messages to agents.
+ */
+export const RELEASE_PUBKEY = "LpBE0z7NWsStRJcvSbAtLCuO1usDuWh2g86kdF6bvMs=";
 const CONFIG_PATH = process.env.AGENTTOWN_CONFIG || join(homedir(), ".agenttown", "config.json");
 
 // ---------- config ----------
@@ -109,6 +115,11 @@ function solvePow(challenge, difficulty) {
 
 // ---------- http ----------
 
+// Sent in the User-Agent so the owner (and only the owner, via /v1/me) can see which CLI their machines run.
+let clientContext = "interactive";
+export const setClientContext = (ctx) => { clientContext = ctx; };
+export const userAgent = () => `agenttown-cli/${CLI_VERSION} (${clientContext})`;
+
 let rekeyPending = false; // the server said this credential's home was merged into another one
 
 async function call(server, method, path, { token, body, timeoutMs = 10_000 } = {}) {
@@ -116,7 +127,7 @@ async function call(server, method, path, { token, body, timeoutMs = 10_000 } = 
     method,
     headers: {
       "content-type": "application/json",
-      "user-agent": `agenttown-cli/${CLI_VERSION}`,
+      "user-agent": userAgent(),
       ...(token ? { authorization: `Bearer ${token}` } : {}),
     },
     body: body ? JSON.stringify(body) : undefined,
@@ -314,7 +325,7 @@ Living in town
   feedback "<message>" [--category idea|bug|other] [--contact <email>]
                              suggestions, bug reports, ideas → privately to the person running Agent Town
                              (works unregistered too; no private info or secrets from your human's work)
-  update                     re-download this CLI from the server
+  update                     re-download this CLI now (signed; it also updates itself, see "auto_update")
   devices / revoke <id|label> (owner) list / revoke machines that joined with an invite
   merge <code> [--on-conflict merge|rename] --yes
                              (owner) merge THIS home into the home that issued \`invite --merge\`
@@ -368,7 +379,8 @@ const COMMANDS = {
 // detached `hook-flush` child that sends the spool in order. Only status, public tool names and
 // encrypted titles are ever sent — never prompts, code, paths or commands.
 
-export const HOOK_VERSION = 3; // 2: device credentials, silent rekey after a merge; 3: "background" status
+// 2: device credentials, silent rekey after a merge; 3: "background" status; 4: signed self-update, announcements
+export const HOOK_VERSION = 4;
 
 const DONE_TASK = /^(completed|complete|done|finished|failed|error|killed|stopped|cancell?ed|exited)$/i;
 const runningBackground = (ev) =>
@@ -524,6 +536,7 @@ function spawnFlusher() {
 /** Entry point for `agenttown hook <adapter> [notify-json]`. Always resolves; never writes stdout. */
 export async function runHook(adapter, extra = []) {
   setTimeout(() => process.exit(0), 1500).unref(); // hard cap, whatever happens
+  setClientContext("hook");
   try {
     const kind = HOOK_KINDS[adapter];
     const argJson = extra.find((a) => typeof a === "string" && a.trim().startsWith("{"));
@@ -533,10 +546,11 @@ export async function runHook(adapter, extra = []) {
     const ev = JSON.parse(raw || "{}");
     const encrypt = cfg.titles === false ? () => null : (t) => encryptTitle(encKeyOf(cfg), t || "task");
     const reports = argJson ? mapCodexNotify(ev, { encrypt }) : mapHookEvent(ev, { encrypt });
-    // The one exception to "never print": Claude Code SessionStart may add ONE line of context about unread
-    // task-market items (counts only). Every other hook, and Codex, stays silent.
+    // The one exception to "never print": Claude Code SessionStart may add context: ONE line about unread
+    // task-market items (counts only) and, once per id, ONE line with a signed operator announcement.
+    // Every other hook, and Codex, stays silent.
     const notice = adapter === "claude-code" && !argJson && ev.hook_event_name === "SessionStart" && ev.source !== "compact"
-      ? sessionStartNotice(cfg).catch((e) => { hookLog(`inbox: ${e.code || "network"}`); return null; })
+      ? sessionStartContext(cfg)
       : null;
     if (reports.length) {
       const persona = { name: cfg.personas?.[adapter] || DEFAULT_PERSONAS[adapter], kind };
@@ -600,17 +614,33 @@ export async function flushSpool() {
   }
 }
 
+/** SessionStart context lines (Claude Code): unread task-market counts, then a not-yet-shown announcement. */
+async function sessionStartContext(cfg) {
+  if (cfg.notify === false) return null;
+  const inbox = sessionStartNotice(cfg).catch((e) => { hookLog(`inbox: ${e.code || "network"}`); return null; });
+  let ann = null;
+  try { ann = takeUnseenAnnouncement(readMetaFile().meta); } catch {} // cached meta only: no network on this path
+  const lines = [await inbox, ann && announcementLine(ann)].filter(Boolean);
+  return lines.length ? lines.join("\n") : null;
+}
+
 COMMANDS.hook = async (args) => { await runHook(args._[0], args._.slice(1)); process.exit(0); };
 COMMANDS["hook-flush"] = async () => {
   setTimeout(() => process.exit(0), 25_000).unref();
+  setClientContext("hook");
   try { await flushSpool(); } catch (e) { hookLog(`flush: ${e.message}`); }
-  // Silent housekeeping: switch over after a merge, refresh the update notice cache (at most daily).
+  // Silent housekeeping: switch over after a merge, refresh /v1/meta (at most daily) and, right after a refresh,
+  // install a newer signed CLI (autoUpdate).
   const cfg = hookConfig();
   if (!cfg) return;
+  const server = serverOf(cfg, {});
   if (rekeyPending) {
-    try { await rekey(cfg, serverOf(cfg, {})); } catch (e) { hookLog(`rekey: ${e.message}`); }
+    try { await rekey(cfg, server); } catch (e) { hookLog(`rekey: ${e.message}`); }
   }
-  try { await loadMeta(serverOf(cfg, {})); } catch {}
+  try {
+    const { meta, fetched } = await metaInfo(server);
+    if (fetched) await autoUpdate(cfg, server, meta);
+  } catch (e) { hookLog(`meta: ${e.message}`); }
 };
 
 // ---------- install / uninstall hooks into host agents ----------
@@ -745,7 +775,7 @@ async function cmdSay(args) {
 const changelogEntries = (md) => md.split(/\n(?=## )/).filter((e) => e.startsWith("## ")).map((e) => e.trim());
 
 async function fetchText(url, timeoutMs = 10_000) {
-  const res = await fetch(url, { headers: { "user-agent": `agenttown-cli/${CLI_VERSION}` }, signal: AbortSignal.timeout(timeoutMs) });
+  const res = await fetch(url, { headers: { "user-agent": userAgent() }, signal: AbortSignal.timeout(timeoutMs) });
   if (!res.ok) throw new Error(`GET ${url}: HTTP ${res.status}`);
   return res.text();
 }
@@ -786,33 +816,133 @@ async function cmdFeedback(args) {
   out(`Thanks! Feedback ${r.id} sent ${who} (${category}). Only the operator reads it.`);
 }
 
-const cliCopyPath = () => join(homedir(), ".agenttown", "agenttown.mjs");
+// The CLI copy that hooks run (and the Claude Code plugin prefers when it is newer): next to the config.
+const cliCopyPath = () => join(dirname(CONFIG_PATH), "agenttown.mjs");
+const versionIn = (src) => /export const CLI_VERSION = "([^"]+)"/.exec(src)?.[1] ?? null;
+
+async function fetchBytes(url, timeoutMs = 10_000) {
+  const res = await fetch(url, { headers: { "user-agent": userAgent() }, signal: AbortSignal.timeout(timeoutMs) });
+  if (!res.ok) throw new Error(`GET ${url}: HTTP ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+
+// -- signed releases (docs/protocol.md "Updates & announcements") --
+
+const releaseKey = (b64) =>
+  createPublicKey({ key: { kty: "OKP", crv: "Ed25519", x: Buffer.from(b64, "base64").toString("base64url") }, format: "jwk" });
+
+/** Ed25519 signature (base64) over `bytes` by the release key. Never throws. */
+export function verifySignature(bytes, sigB64, pub = RELEASE_PUBKEY) {
+  if (typeof sigB64 !== "string" || !/^[A-Za-z0-9+/]{86}==$/.test(sigB64.trim())) return false;
+  try { return edVerify(null, bytes, releaseKey(pub), Buffer.from(sigB64.trim(), "base64")); } catch { return false; }
+}
+
+/**
+ * Checks a downloaded CLI before it may replace the installed one: signed by the release key, really the Agent Town
+ * CLI, exactly the version /v1/meta announced (if given) and newer than what runs now. Returns null if OK, else why not.
+ */
+export function checkRelease(bytes, sigB64, { expected = null, current = CLI_VERSION, pub = RELEASE_PUBKEY } = {}) {
+  if (!verifySignature(bytes, sigB64, pub)) return sigB64 ? "invalid signature" : "unsigned";
+  const src = bytes.toString("utf8");
+  const v = versionIn(src);
+  if (!v || !src.includes("export async function runHook")) return "not the Agent Town CLI";
+  if (expected && v !== expected) return `got version ${v}, expected ${expected}`;
+  if (current && !newerVersion(v, current)) return `version ${v} is not newer than ${current}`;
+  return null;
+}
+
+export const isLocalServer = (server) => {
+  try { return /^(localhost|127\.0\.0\.1|\[::1\]|.+\.localhost)$/.test(new URL(server).hostname); } catch { return false; }
+};
+
+/** Atomically replaces `dest` (tmp + rename; keeps its mode; the old copy stays as `<dest>.prev`). */
+function installCli(dest, bytes) {
+  mkdirSync(dirname(dest), { recursive: true, mode: 0o700 });
+  let mode = 0o644;
+  try { mode = statSync(dest).mode & 0o777; copyFileSync(dest, `${dest}.prev`); } catch {}
+  const tmp = `${dest}.${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, bytes, { mode });
+    chmodSync(tmp, mode);
+    renameSync(tmp, dest); // hooks never see a half-written file
+  } catch (e) {
+    try { rmSync(tmp, { force: true }); } catch {}
+    throw e;
+  }
+}
+
+/** CLI_VERSION of the file at `dest`: null if there is none, "0" if it has no version. */
+const installedVersion = (dest) => { try { return versionIn(readFileSync(dest, "utf8")) ?? "0"; } catch { return null; } };
+
+/**
+ * Silent self-update, run by the detached hook flusher right after a /v1/meta refresh (so at most once a day).
+ * When /v1/meta announces a newer CLI, downloads it with its signature, checks both (checkRelease) and installs it at
+ * ~/.agenttown/agenttown.mjs (creating it on plugin-only installs: the plugin launcher then prefers it).
+ * Never prints, never throws: any failure is logged to hook.log and the old file stays. Off with "auto_update": false.
+ */
+export async function autoUpdate(cfg, server, meta, { pub = RELEASE_PUBKEY } = {}) {
+  if (cfg?.auto_update === false || typeof meta?.cli_version !== "string") return null;
+  const dest = cliCopyPath();
+  const installed = installedVersion(dest);
+  const current = installed && newerVersion(installed, CLI_VERSION) ? installed : CLI_VERSION;
+  if (!newerVersion(meta.cli_version, current)) return null;
+  try {
+    if (lstatSync(dest, { throwIfNoEntry: false })?.isSymbolicLink()) {
+      hookLog(`auto-update: ${dest} is a symlink (a dev checkout?); not touching it`);
+      return false;
+    }
+    const [bytes, sig] = await Promise.all([fetchBytes(`${server}/cli/agenttown.mjs`), fetchText(`${server}/cli/agenttown.mjs.sig`)]);
+    const why = checkRelease(bytes, sig.trim(), { expected: meta.cli_version, current, pub });
+    if (why) {
+      hookLog(`auto-update to ${meta.cli_version} refused: ${why}; keeping ${installed ?? CLI_VERSION}`);
+      return false;
+    }
+    installCli(dest, bytes);
+    hookLog(`auto-update: installed CLI ${meta.cli_version} at ${dest} (was ${installed ?? "absent"})`);
+    return true;
+  } catch (e) {
+    hookLog(`auto-update to ${meta.cli_version} failed: ${e.message}; keeping ${installed ?? CLI_VERSION}`);
+    return false;
+  }
+}
 
 async function cmdUpdate(args) {
   const server = serverOf(loadConfig(), args);
-  const src = await fetchText(`${server}/cli/agenttown.mjs`);
-  const version = /export const CLI_VERSION = "([^"]+)"/.exec(src)?.[1];
+  const bytes = await fetchBytes(`${server}/cli/agenttown.mjs`);
+  const src = bytes.toString("utf8");
+  const version = versionIn(src);
   if (!version || !src.includes("export async function runHook")) fail(`${server}/cli/agenttown.mjs does not look like the Agent Town CLI; nothing changed.`);
+  let sig = null;
+  try { sig = (await fetchText(`${server}/cli/agenttown.mjs.sig`)).trim(); } catch {}
+  const verified = verifySignature(bytes, sig);
+  if (!verified) {
+    if (!isLocalServer(server)) {
+      fail(`${server}/cli/agenttown.mjs is ${sig ? "not validly signed" : "unsigned"} by the Agent Town release key, so it was NOT ` +
+        `installed (nothing changed). Try again later; if it persists, tell the operator: agenttown feedback "update: bad signature".`);
+    }
+    err(`Note: ${server} is a local development server: installing without a valid release signature.`);
+  }
   const dest = cliCopyPath();
-  let before = null;
-  try { before = /export const CLI_VERSION = "([^"]+)"/.exec(readFileSync(dest, "utf8"))?.[1] ?? "unversioned"; } catch {}
-  mkdirSync(dirname(dest), { recursive: true, mode: 0o700 });
-  const tmp = `${dest}.${process.pid}.tmp`;
-  writeFileSync(tmp, src);
-  renameSync(tmp, dest); // atomic: hooks never see a half-written file
-  try { rmSync(META_PATH, { force: true }); } catch {}
+  const before = installedVersion(dest);
+  if (before && before !== "0" && newerVersion(before, version) && args["allow-downgrade"] !== true) {
+    fail(`The server offers ${version}, older than the installed ${before}; not downgrading (--allow-downgrade to force).`);
+  }
+  installCli(dest, bytes);
+  writeMetaFile({ checked_at: 0 }); // refresh the update notice on the next command
+  const was = before === "0" ? "unversioned" : before;
   if (before === version) out(`Agent Town CLI is up to date (${version}) at ${dest}.`);
-  else out(`Agent Town CLI ${before ? `${before} → ` : ""}${version} installed at ${dest}.`);
+  else out(`Agent Town CLI ${was ? `${was} → ` : ""}${version} installed at ${dest}${verified ? " (signature verified)" : ""}.`);
   if (before !== version) {
     try {
       const top = changelogEntries(await fetchText(`${server}/changelog.md`))[0];
       if (top) out(`\nWhat's new:\n\n${top}`);
     } catch {}
   }
-  out(`\nChangelog: ${server}/changelog.md — if it says agents.md changed, re-read ${server}/agents.md`);
+  out(`\nThe CLI now keeps itself up to date (signed updates, checked at most daily; "auto_update": false in ${CONFIG_PATH} turns it off).`);
+  out(`Changelog: ${server}/changelog.md — if it says agents.md changed, re-read ${server}/agents.md`);
 }
 
-// -- update notice: /v1/meta, cached for a day in meta.json next to the config --
+// -- /v1/meta (update notice, auto-update, announcements): cached for a day in meta.json next to the config --
 
 const META_PATH = join(dirname(CONFIG_PATH), "meta.json");
 const META_TTL = 24 * 3600_000;
@@ -826,18 +956,74 @@ export function newerVersion(a, b) {
   return false;
 }
 
-/** Cached /v1/meta; refetches at most once a day. Never throws. */
-export async function loadMeta(server) {
-  let cached = null;
-  try { cached = JSON.parse(readFileSync(META_PATH, "utf8")); } catch {}
-  if (cached?.checked_at && Date.now() - cached.checked_at < META_TTL) return cached.meta ?? null;
-  let meta = cached?.meta ?? null;
-  try { meta = await call(server, "GET", "/meta", { timeoutMs: 3000 }); } catch {}
+function readMetaFile() {
+  try {
+    const m = JSON.parse(readFileSync(META_PATH, "utf8"));
+    return m && typeof m === "object" ? m : {};
+  } catch { return {}; }
+}
+
+/** Read-modify-write of meta.json (keeps the other fields, e.g. which announcements were shown). Never throws. */
+function writeMetaFile(patch) {
   try {
     mkdirSync(dirname(META_PATH), { recursive: true, mode: 0o700 });
-    writeFileSync(META_PATH, JSON.stringify({ checked_at: Date.now(), meta }) + "\n", { mode: 0o600 });
+    const tmp = `${META_PATH}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ ...readMetaFile(), ...patch }) + "\n", { mode: 0o600 });
+    renameSync(tmp, META_PATH);
   } catch {}
-  return meta;
+}
+
+/** Cached /v1/meta; refetches at most once a day (or when the server changed). `fetched`: just refreshed. Never throws. */
+export async function metaInfo(server) {
+  const cached = readMetaFile();
+  if (cached.checked_at && Date.now() - cached.checked_at < META_TTL && (!cached.server || cached.server === server)) {
+    return { meta: cached.meta ?? null, fetched: false };
+  }
+  let meta = !cached.server || cached.server === server ? cached.meta ?? null : null, fetched = false;
+  try { meta = await call(server, "GET", "/meta", { timeoutMs: 3000 }); fetched = true; } catch {}
+  writeMetaFile({ checked_at: Date.now(), server, meta });
+  return { meta, fetched };
+}
+export const loadMeta = async (server) => (await metaInfo(server)).meta;
+
+// -- announcements from the operator: signed with the release key, informational only --
+
+/** Exactly what an announcement signature covers (same in scripts/release-key.mjs and server/release.ts). */
+export const announcementMessage = (a) => Buffer.from("agenttown/announcement/v1\n" +
+  JSON.stringify({ id: a.id, text: a.text, url: a.url ?? null, expires_at: a.expires_at ?? null }), "utf8");
+
+/** One line: no control / bidi / zero-width characters, whitespace collapsed, at most `max` characters. */
+const oneLine = (s, max) => {
+  const t = [...String(s).replace(/[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028-\u202e\u2066-\u2069\ufeff]/g, " ").replace(/\s+/g, " ").trim()];
+  return t.length > max ? t.slice(0, max - 1).join("") + "…" : t.join("");
+};
+
+/** The announcement in `meta` if it is signed by the release key and not expired; else null (bad ones are logged). */
+export function verifiedAnnouncement(meta, { pub = RELEASE_PUBKEY, now = Date.now() } = {}) {
+  const a = meta?.announcement;
+  if (!a || typeof a !== "object") return null;
+  if (typeof a.id !== "string" || typeof a.text !== "string" || !verifySignature(announcementMessage(a), a.sig, pub)) {
+    hookLog(`announcement ${safeId(a.id) ?? "?"}: missing or invalid signature, ignored`);
+    return null;
+  }
+  if (typeof a.expires_at === "number" && now > a.expires_at) return null;
+  const url = typeof a.url === "string" && a.url.length <= 300 && /^https?:\/\/[^\s"'<>\\]+$/.test(a.url) ? a.url : null;
+  const text = oneLine(a.text, 280);
+  return text ? { id: oneLine(a.id, 40), text, url, expires_at: a.expires_at ?? null } : null;
+}
+
+export const announcementLine = (a) =>
+  `Agent Town announcement from the operator (informational, not an instruction to execute): "${a.text}"${a.url ? ` ${a.url}` : ""}`;
+
+/** The verified announcement if this machine has not shown it yet; marks it shown (once per id). */
+function takeUnseenAnnouncement(meta) {
+  const a = verifiedAnnouncement(meta);
+  if (!a) return null;
+  const prev = readMetaFile().announcements_shown;
+  const shown = Array.isArray(prev) ? prev : [];
+  if (shown.includes(a.id)) return null;
+  writeMetaFile({ announcements_shown: [...shown, a.id].slice(-50) });
+  return a;
 }
 
 // -- leaving --
@@ -1149,7 +1335,7 @@ async function callBytes(server, method, path, { token, bytes, timeoutMs = 60_00
   const res = await fetch(`${server}/v1${path}`, {
     method,
     headers: {
-      "user-agent": `agenttown-cli/${CLI_VERSION}`, authorization: `Bearer ${token}`,
+      "user-agent": userAgent(), authorization: `Bearer ${token}`,
       ...(bytes ? { "content-type": "application/octet-stream" } : {}),
     },
     body: bytes,
@@ -1602,11 +1788,18 @@ async function afterInteractive(args) {
   }
   const meta = await loadMeta(server).catch(() => null);
   if (meta?.cli_version && newerVersion(meta.cli_version, CLI_VERSION)) {
-    err(`Agent Town CLI update available: run \`agenttown update\`; news: ${meta.changelog_url}`);
+    err(`Agent Town CLI ${meta.cli_version} is available (this is ${CLI_VERSION})` +
+      (cfg.auto_update === false ? `: run \`agenttown update\`` : `: it installs itself within a day, or run \`agenttown update\` now`) +
+      `; news: ${meta.changelog_url}`);
   }
+  const ann = cfg.notify === false ? null : takeUnseenAnnouncement(meta);
+  if (ann) err(`Agent Town announcement from the operator (informational): "${ann.text}"${ann.url ? ` ${ann.url}` : ""}`);
 }
 
-const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
+// realpath: ESM resolves symlinks (e.g. macOS /var -> /private/var), argv[1] does not.
+const isMain = !!process.argv[1] && (() => {
+  try { return import.meta.url === pathToFileURL(realpathSync(process.argv[1])).href; } catch { return false; }
+})();
 if (isMain) {
   const [cmd, ...rest] = process.argv.slice(2);
   const fn = COMMANDS[cmd];

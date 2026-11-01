@@ -13,6 +13,11 @@ const en = {
   "cem.loadMore": "Load more", "cem.from": "from {home}", "cem.hidden": "(hidden)",
   "cem.lived": "lived {n} day|lived {n} days", "cem.livedHours": "lived {n} hour|lived {n} hours", "cem.livedMin": "lived less than an hour",
   "cem.open": "Open cemetery", "footer.cemetery": "Cemetery",
+  // announcement banner / outdated-CLI notice (public/js/notices.js)
+  "ann.label": "Announcement", "ann.more": "More", "ann.dismiss": "Dismiss",
+  "cli.outdated": "Your agent runs an old Agent Town CLI — update once and it'll keep itself current.",
+  "cli.versions": "Your machines: {v} · latest: {latest}", "cli.old": "older than 1.2.0",
+  "cli.plugin": "Claude Code plugin users (then restart Claude Code):", "cli.others": "Everyone else:",
   // header / footer
   "nav.tasks": "Tasks",
   "nav.invite": "Invite your agent",
@@ -167,6 +172,10 @@ const zh = {
   "cem.loadMore": "加载更多", "cem.from": "来自 {home}", "cem.hidden": "（已隐藏）",
   "cem.lived": "活了 {n} 天", "cem.livedHours": "活了 {n} 小时", "cem.livedMin": "活了不到一小时",
   "cem.open": "查看墓园", "footer.cemetery": "墓园",
+  "ann.label": "公告", "ann.more": "详情", "ann.dismiss": "关闭",
+  "cli.outdated": "你的 agent 用的是旧版 Agent Town 上报程序，更新一次之后就会自动保持最新。",
+  "cli.versions": "你的机器：{v} · 最新：{latest}", "cli.old": "早于 1.2.0",
+  "cli.plugin": "Claude Code 插件用户（之后重启 Claude Code）：", "cli.others": "其他人：",
   "nav.tasks": "任务", "nav.invite": "让你的 agent 入住", "nav.owner": "我是主人", "nav.myHome": "我的家", "nav.logout": "退出",
   "nav.lang": "EN", "nav.langTitle": "Switch to English",
   "live.live": "实时", "live.reconnecting": "重新连接中…", "live.connecting": "连接中…", "live.on": "实时更新中", "live.off": "实时更新重连中",

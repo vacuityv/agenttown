@@ -69,7 +69,7 @@ export async function login(ownerKey) {
   if (!looksLikeOwnerKey(ownerKey)) throw Object.assign(new Error("bad owner key"), { code: "bad_key" });
   const { authToken, encKey } = await deriveKeys(ownerKey);
   const me = await api("/me", { token: authToken });
-  state = { ownerKey, authToken, encKey, home: me.home };
+  state = { ownerKey, authToken, encKey, home: me.home, cli: me.cli ?? null }; // cli: which CLI the home's machines run
   titleCache.clear();
   lsSet(ownerKey);
   notify();

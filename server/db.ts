@@ -418,6 +418,21 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
     ],
   },
   // ---- end feedback ----
+  // ---- CLI releases & announcements (server/release.ts). Versions >= 500. ----
+  {
+    version: 500,
+    statements: [
+      // PRIVATE CLI version telemetry from the User-Agent (owner via /v1/me, operator via /v1/admin/homes only).
+      `ALTER TABLE homes ADD COLUMN cli_version VARCHAR(16) NULL, ADD COLUMN cli_seen_at BIGINT NULL`,
+      `ALTER TABLE devices ADD COLUMN cli_version VARCHAR(16) NULL, ADD COLUMN cli_seen_at BIGINT NULL`,
+      // Small key/value settings; k = 'announcement' holds the current signed announcement (JSON).
+      `CREATE TABLE IF NOT EXISTS settings (
+        k          VARCHAR(64) NOT NULL PRIMARY KEY,
+        v          TEXT        NOT NULL,
+        updated_at BIGINT      NOT NULL
+      ) ${T}`,
+    ],
+  },
 ];
 
 export async function initDb() {

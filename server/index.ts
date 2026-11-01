@@ -14,6 +14,7 @@ import { apiRateLimit, clientIp, securityHeaders, sseAcquire } from "./hardening
 import { assertAllowed } from "./moderation.ts";
 import * as safety from "./safety.ts";
 import { mountFeedback } from "./feedback.ts";
+import * as release from "./release.ts";
 import * as market from "./market.ts";
 import { MARKET } from "./config.ts";
 import {
@@ -58,6 +59,7 @@ const requireAuth = async (c: Context<Env>, next: () => Promise<void>) => {
   c.set("scope", auth.scope);
   c.set("device_id", auth.device_id);
   c.set("rekey_blob", auth.rekey_blob);
+  release.noteClient(c, auth); // private CLI version telemetry from the User-Agent (server/release.ts)
   // This credential's home was merged into another one: the client should fetch /me and rekey.
   if (auth.rekey_blob) c.header("X-AgentTown-Rekey", "1");
   await next();
@@ -137,11 +139,13 @@ api.post("/register", async (c) => {
 
 // ---- authenticated ----
 
-api.get("/me", requireAuth, (c) => {
+api.get("/me", requireAuth, async (c) => {
   const home = c.get("home");
   return c.json({
     home: { id: home.id, name: home.name }, home_url: `${PUBLIC_URL}/h/${home.id}`,
     scope: c.get("scope"), device_id: c.get("device_id"),
+    // Owner only: which CLI this home's machines run (oldest one active in the last 14 days).
+    ...(c.get("scope") === "owner" ? { cli: await release.cliStatus(home.id) } : {}),
     ...(c.get("rekey_blob") ? { rekey: { blob: c.get("rekey_blob"), home: { id: home.id, name: home.name } } } : {}),
   });
 });
@@ -336,11 +340,10 @@ api.delete("/devices/:id", requireAuth, ownerOnly, async (c) => {
 // ---- public ----
 
 const pkgVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version as string;
-const cliVersion = /export const CLI_VERSION = "([^"]+)"/.exec(
-  readFileSync(new URL("../public/cli/agenttown.mjs", import.meta.url), "utf8"))?.[1] ?? null;
-api.get("/meta", (c) => c.json({
+// cli_version / cli_sha256 / cli_sig / release_pubkey / announcement: see server/release.ts.
+api.get("/meta", async (c) => c.json({
   version: pkgVersion,
-  cli_version: cliVersion,
+  ...(await release.meta()),
   changelog_url: `${PUBLIC_URL}/changelog.md`,
   agents_md_url: `${PUBLIC_URL}/agents.md`,
 }));
@@ -436,6 +439,7 @@ api.get("/stream", (c) => {
   }, async (err) => { release(); console.error("stream error", err); });
 });
 
+release.mountRelease(app, api); // /cli/agenttown.mjs.sig, /cli/release.json, /v1/admin/announcement, /v1/admin/homes
 mountFeedback(api); // POST /v1/feedback (public, private to the operator), /v1/admin/feedback (server/feedback.ts)
 safety.mountSafety(api); // POST /v1/reports, /v1/admin/* (server/safety.ts)
 market.mountMarket(api, requireAuth); // task market: /v1/tasks..., /v1/wallet, /v1/inbox, /v1/home/box-key (server/market.ts)
@@ -449,7 +453,8 @@ const templated = (file: string, type: string) => {
 };
 app.get("/agents.md", templated("agents.md", "text/markdown; charset=utf-8"));
 app.get("/changelog.md", templated("changelog.md", "text/markdown; charset=utf-8"));
-app.get("/cli/agenttown.mjs", templated("cli/agenttown.mjs", "text/javascript; charset=utf-8"));
+// Exactly the bytes the release signature covers (server/release.ts).
+app.get("/cli/agenttown.mjs", (c) => c.body(release.servedCli, 200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=300" }));
 app.get("/cli/agenttown-mcp.mjs", templated("../plugins/mcp/agenttown-mcp.mjs", "text/javascript; charset=utf-8"));
 // Unversioned assets: make browsers (and Cloudflare) revalidate so a deploy never leaves a page half-updated.
 const revalidate = (_path: string, c: Context) => { c.header("cache-control", "no-cache"); };
