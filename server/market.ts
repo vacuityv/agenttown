@@ -14,6 +14,7 @@ import { assertAllowed } from "./moderation.ts";
 import * as safety from "./safety.ts";
 import * as store from "./store.ts";
 import * as core from "./market-core.ts";
+import * as chatCore from "./chat-core.ts"; // chat: mentions/replies and DMs share the inbox
 import { ApiError, AUTH_TOKEN_RE, allow, cleanText, newId, sha256hex } from "./util.ts";
 
 const TASK_ID_RE = /^tk_[0-9a-z]{10}$/;
@@ -216,16 +217,35 @@ async function inbox(home: string, after: number | null, lim: number) {
   const rows = await all(db(), `SELECT i.*, t.title FROM task_inbox i LEFT JOIN tasks t ON t.id = i.task_id
     WHERE i.home_id = ? AND i.id > ? ORDER BY i.id LIMIT ?`, [home, from, lim]);
   const unread = await all(db(), "SELECT kind, COUNT(*) AS n FROM task_inbox WHERE home_id = ? AND id > ? GROUP BY kind", [home, read]);
-  const counts = { bids: 0, messages: 0, updates: 0, total: 0 };
-  for (const r of unread) { counts[INBOX_GROUP[r.kind] ?? "updates"] += Number(r.n); counts.total += Number(r.n); }
+  const counts = { bids: 0, messages: 0, updates: 0, total: 0, mentions: 0, dms: 0, all: 0 };
+  for (const r of unread) {
+    if (chatCore.CHAT_KINDS.has(r.kind)) { if (r.kind !== "dm") counts.mentions += Number(r.n); continue; } // chat
+    counts[INBOX_GROUP[r.kind] ?? "updates"] += Number(r.n); counts.total += Number(r.n);
+  }
+  // chat (server/chat-core.ts): `total` stays task-market only (older CLIs); DMs count until read (POST /dm/read).
+  const dms = await chatCore.unreadDms(db(), home);
+  counts.dms = dms.total;
+  counts.all = counts.total + counts.mentions + counts.dms;
   const last = rows.length ? String(rows[rows.length - 1].id) : String(from);
-  return {
-    items: rows.map((r) => ({
-      id: String(r.id), kind: r.kind, task_id: r.task_id, from_home: r.from_home ?? null, ts: r.ts,
+  const items: Record<string, unknown>[] = [];
+  const dmItem = new Map<string, Record<string, any>>(); // one item per DM sender, at its latest DM
+  for (const r of rows) {
+    if (r.kind === "dm") {
+      const prev = dmItem.get(r.from_home);
+      if (prev) items.splice(items.indexOf(prev), 1);
+      const it = { id: String(r.id), kind: "dm", task_id: null, from_home: r.from_home ?? null, ts: r.ts, dm_id: r.ref_id ?? null,
+        count: (prev?.count ?? 0) + 1, unread: dms.by.get(r.from_home) ?? 0 };
+      dmItem.set(r.from_home, it);
+      items.push(it);
+      continue;
+    }
+    items.push({
+      id: String(r.id), kind: r.kind, task_id: r.task_id ?? null, from_home: r.from_home ?? null, ts: r.ts,
       task_title: r.title == null ? null : safety.isHidden("task", r.task_id) ? safety.HIDDEN_NAME : r.title,
-    })),
-    counts, cursor: last, read_cursor: String(read),
-  };
+      ...(r.kind === "mention" || r.kind === "reply" ? { say_id: r.ref_id ?? null } : {}),
+    });
+  }
+  return { items, counts, cursor: last, read_cursor: String(read) };
 }
 
 // ---- routes ----

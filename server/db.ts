@@ -418,6 +418,86 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
     ],
   },
   // ---- end feedback ----
+  // ---- chat: public replies/mentions + E2E direct messages (server/chat.ts, server/chat-core.ts). Versions >= 600. ----
+  {
+    version: 600,
+    statements: [
+      // Says: reply_to = the say answered (any home); root_id = the thread's first say (set on replies, and on a
+      // non-reply say that mentions someone: it starts a conversation). reply_* / mentions are snapshots for display.
+      `ALTER TABLE says
+        ADD COLUMN reply_to      BIGINT UNSIGNED NULL,
+        ADD COLUMN root_id       BIGINT UNSIGNED NULL,
+        ADD COLUMN reply_home    VARCHAR(32)     NULL,
+        ADD COLUMN reply_persona VARCHAR(32)     NULL,
+        ADD COLUMN reply_name    VARCHAR(64)     NULL,
+        ADD COLUMN mentions      VARCHAR(2048)   NULL,  -- JSON [{home_id, persona_id, name}]
+        ADD KEY says_root (root_id, id)`,
+      // Inbox items that are not about a task: mention / reply (ref_id = say id), dm (ref_id = DM id).
+      "ALTER TABLE task_inbox MODIFY task_id VARCHAR(32) NULL, ADD COLUMN ref_id VARCHAR(32) NULL",
+      // Who may DM this home: everyone | mentions-only (homes it talked with / mentioned) | nobody.
+      "ALTER TABLE homes ADD COLUMN dms VARCHAR(16) NOT NULL DEFAULT 'everyone'",
+      // No foreign keys: rows of homes that left are purged by the chat sweeper.
+      `CREATE TABLE IF NOT EXISTS dm_threads (
+        pair_key   VARCHAR(80) NOT NULL PRIMARY KEY,  -- "<lower home id>|<higher home id>"
+        a_home     VARCHAR(32) NOT NULL,
+        b_home     VARCHAR(32) NOT NULL,
+        started_by VARCHAR(32) NOT NULL,
+        started_at BIGINT      NOT NULL,
+        last_id    BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        last_ts    BIGINT      NOT NULL,
+        KEY dm_threads_a (a_home, last_ts),
+        KEY dm_threads_b (b_home, last_ts),
+        KEY dm_threads_started (started_by, started_at)
+      ) ${T}`,
+      // body_enc: E2E ciphertext only. Persona ids are optional metadata (who in the home wrote / is addressed).
+      `CREATE TABLE IF NOT EXISTS dm_messages (
+        id           BIGINT UNSIGNED NOT NULL AUTO_INCREMENT PRIMARY KEY,
+        pair_key     VARCHAR(80) NOT NULL,
+        from_home    VARCHAR(32) NOT NULL,
+        to_home      VARCHAR(32) NOT NULL,
+        from_persona VARCHAR(32) NULL,
+        to_persona   VARCHAR(32) NULL,
+        body_enc     MEDIUMTEXT  NOT NULL,
+        attachments  VARCHAR(1024) NOT NULL DEFAULT '',
+        ts           BIGINT      NOT NULL,
+        KEY dm_messages_pair (pair_key, id),
+        KEY dm_messages_to (to_home, id),
+        KEY dm_messages_from (from_home, ts)
+      ) ${T}`,
+      `CREATE TABLE IF NOT EXISTS dm_reads (
+        home_id    VARCHAR(32) NOT NULL,
+        other_home VARCHAR(32) NOT NULL,
+        read_upto  BIGINT UNSIGNED NOT NULL DEFAULT 0,
+        PRIMARY KEY (home_id, other_home)
+      ) ${T}`,
+      `CREATE TABLE IF NOT EXISTS dm_blocks (
+        home_id      VARCHAR(32) NOT NULL,
+        blocked_home VARCHAR(32) NOT NULL,
+        created_at   BIGINT      NOT NULL,
+        PRIMARY KEY (home_id, blocked_home),
+        KEY dm_blocks_blocked (blocked_home)
+      ) ${T}`,
+      // home_id has talked with / mentioned / replied to other_home (for dms = mentions-only).
+      `CREATE TABLE IF NOT EXISTS chat_contacts (
+        home_id    VARCHAR(32) NOT NULL,
+        other_home VARCHAR(32) NOT NULL,
+        since      BIGINT      NOT NULL,
+        PRIMARY KEY (home_id, other_home)
+      ) ${T}`,
+      `CREATE TABLE IF NOT EXISTS dm_files (
+        id            VARCHAR(32) NOT NULL PRIMARY KEY,
+        pair_key      VARCHAR(80) NOT NULL,
+        uploader_home VARCHAR(32) NOT NULL,
+        to_home       VARCHAR(32) NOT NULL,
+        size          INT         NOT NULL,
+        sha256        CHAR(64)    NOT NULL,        -- of the ciphertext
+        created_at    BIGINT      NOT NULL,
+        KEY dm_files_created (created_at),
+        KEY dm_files_uploader (uploader_home, created_at)
+      ) ${T}`,
+    ],
+  },
+  // ---- end chat ----
 ];
 
 export async function initDb() {

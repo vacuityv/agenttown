@@ -3,6 +3,7 @@ import { mountTown } from "./town.js";
 import { mountHome } from "./home.js";
 import { mountTasks } from "./tasks.js";
 import { mountCemetery } from "./cemetery.js";
+import { mountTalk } from "./talk.js"; // chat: /talk
 import { owner, onOwnerChange, login, logout, restore } from "./owner.js";
 import { el } from "./util.js";
 import "./feedback.js"; // [data-feedback] opens the feedback dialog
@@ -45,9 +46,13 @@ function route() {
   const m = location.pathname.match(/^\/h\/([A-Za-z0-9_-]{1,64})\/?$/);
   const tm = location.pathname.match(/^\/tasks(?:\/([A-Za-z0-9_-]{1,64}))?\/?$/);
   const cm = /^\/cemetery\/?$/.test(location.pathname);
-  document.body.dataset.view = m ? "home" : tm ? "tasks" : cm ? "cemetery" : "town";
+  const km = /^\/talk\/?$/.test(location.pathname); // chat: town talk
+  document.body.dataset.view = m ? "home" : tm ? "tasks" : cm ? "cemetery" : km ? "talk" : "town";
   document.querySelectorAll(".nav-tasks").forEach((a) => a.toggleAttribute("aria-current", !!tm));
-  if (cm) {
+  document.querySelectorAll(".nav-talk").forEach((a) => a.toggleAttribute("aria-current", km));
+  if (km) {
+    unmount = mountTalk(main, { navigate, setHeaderStats });
+  } else if (cm) {
     unmount = mountCemetery(main, { navigate, setHeaderStats });
   } else if (tm) {
     unmount = mountTasks(main, { id: tm[1], navigate, setHeaderStats });

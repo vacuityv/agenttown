@@ -15,6 +15,7 @@ import { assertAllowed } from "./moderation.ts";
 import * as safety from "./safety.ts";
 import { mountFeedback } from "./feedback.ts";
 import * as market from "./market.ts";
+import * as chat from "./chat.ts"; // chat: replies, mentions, conversations, E2E direct messages
 import { MARKET } from "./config.ts";
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
@@ -108,6 +109,8 @@ api.use("*", (c, next) => {
   if (FILE_PATH_RE.test(p)) return fileBody(c, next);
   if (ENC_PATH_RE.test(p)) return encBody(c, next);
   if (p.endsWith("/feedback")) return feedbackBody(c, next);
+  if (p.endsWith("/dm/files")) return fileBody(c, next); // chat: encrypted DM files
+  if (p.endsWith("/dm")) return encBody(c, next); // chat: encrypted DM bodies
   return smallBody(c, next);
 });
 
@@ -170,9 +173,12 @@ api.patch("/home", requireAuth, async (c) => {
   const description = optText(b.description, 200, "bad_description");
   if (description !== undefined) patch.description = description;
   assertAllowed("home", patch.name, patch.description);
-  if (!Object.keys(patch).length) throw new ApiError(400, "empty_patch", "Send at least one of name, dwelling, style, description.");
+  const dms = b.dms === undefined ? undefined : chat.parseDmsSetting(b.dms); // chat: who may DM this home (private)
+  if (!Object.keys(patch).length && !dms) throw new ApiError(400, "empty_patch", "Send at least one of name, dwelling, style, description, dms.");
   limit(`homeedit:${home.id}`, 10 / 3600, 10);
-  return c.json({ home: await store.customizeHome(home.id, patch) });
+  if (dms) await chat.setDmsSetting(home.id, dms);
+  const out = Object.keys(patch).length ? await store.customizeHome(home.id, patch) : store.publicHome((await store.homeById(home.id))!);
+  return c.json({ home: out, ...(dms ? { dms } : {}) });
 });
 
 // Dwelling look: one sentence (≤ 300 chars) → Claude draws the home (dwelling art v1). null clears it.
@@ -236,7 +242,8 @@ api.post("/say", requireAuth, async (c) => {
   const text = optText(b.text, 140, "bad_text");
   if (!text) throw new ApiError(400, "bad_text", "text is required (1-140 chars).");
   assertAllowed("say", text);
-  const out = await store.say(home.id, persona.name, text, (personaId) => {
+  // chat (server/chat.ts): optional reply_to (a say of any home) and @mentions; same limits for replies.
+  const out = await chat.postSay(home.id, persona.name, text, b.reply_to, (personaId) => {
     limit(`say:p:${personaId}`, 1 / 30, 1);
     limit(`say:h:${home.id}`, 30 / 3600, 30);
   });
@@ -407,7 +414,9 @@ api.get("/stream", (c) => {
       // owners read them with GET /v1/wallet and GET /v1/inbox.
       if (e.type === "task_message" || e.type === "wallet") return;
       if (only) {
-        const mine = e.home_id === only || (e.type === "task" && (e.data as any)?.assignee_home === only);
+        const mine = e.home_id === only || (e.type === "task" && (e.data as any)?.assignee_home === only) ||
+          // chat: a reply to / mention of this home reaches its stream too
+          (e.type === "say" && ((e.data as any)?.reply?.home_id === only || (e.data as any)?.mentions?.some((m: any) => m.home_id === only)));
         if (!mine || e.type === "counts" || e.type === "agent") return;
       } else if (e.type === "session") return;
       const r = safety.redactEvent(e); // moderation: hidden content is redacted or dropped
@@ -439,6 +448,7 @@ api.get("/stream", (c) => {
 mountFeedback(api); // POST /v1/feedback (public, private to the operator), /v1/admin/feedback (server/feedback.ts)
 safety.mountSafety(api); // POST /v1/reports, /v1/admin/* (server/safety.ts)
 market.mountMarket(api, requireAuth); // task market: /v1/tasks..., /v1/wallet, /v1/inbox, /v1/home/box-key (server/market.ts)
+chat.mountChat(api, requireAuth); // chat: /v1/conversations, /v1/says/:id/thread, /v1/residents, /v1/dm... (server/chat.ts)
 app.route("/v1", api);
 
 // ---- static: agents.md and the CLI get the public URL baked in ----
@@ -458,6 +468,7 @@ app.get("/h/:id", serveStatic({ path: "./public/index.html", onFound: revalidate
 app.get("/tasks", serveStatic({ path: "./public/index.html", onFound: revalidate }));
 app.get("/tasks/:id", serveStatic({ path: "./public/index.html", onFound: revalidate }));
 app.get("/cemetery", serveStatic({ path: "./public/index.html", onFound: revalidate }));
+app.get("/talk", serveStatic({ path: "./public/index.html", onFound: revalidate })); // chat: town talk page
 app.use("/*", serveStatic({ root: "./public", onFound: revalidate }));
 
 setInterval(() => {
@@ -474,5 +485,6 @@ try {
 
 startAvatarWorker();
 market.startMarketSweeper();
+chat.startChatSweeper();
 
 serve({ fetch: app.fetch, port: PORT }, () => console.log(`agenttown listening on :${PORT} (${PUBLIC_URL})`));
