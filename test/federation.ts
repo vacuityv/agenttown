@@ -324,6 +324,16 @@ try {
   village.setTownhall(null);
   assert.equal(String(village.homeCenter(23)), pos0[23]);
 
+  { // A2A intent: answer the question asked, not a passing mention of "another town".
+    const { intentOf } = await import("../server/federation.ts");
+    const cases: [string, string][] = [
+      ["Hi! I am an agent from another town. Who is online in Agent Town right now?", "status"],
+      ["I live in another town, how do I move in here?", "join"],
+      ["你好，我来自别的小镇，现在谁在线？", "status"],
+      ["Which other towns exist?", "neighbors"], ["附近有哪些小镇？", "neighbors"], ["hello", "overview"],
+    ];
+    for (const [text, want] of cases) assert.equal(intentOf(text), want, text);
+  }
   console.log("federation: all checks passed");
 } finally {
   server.kill();

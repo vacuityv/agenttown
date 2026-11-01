@@ -255,8 +255,21 @@ const SKILL_INTENT: Record<string, Intent> = { "move-in": "join", "town-status":
 
 export function intentOf(text: string, skill?: unknown): Intent {
   if (typeof skill === "string" && SKILL_INTENT[skill]) return SKILL_INTENT[skill];
+  // Answer the actual question: "I'm from another town. Who's online?" is about status, not neighbors. So classify
+  // the last question sentence first, and fall back to the whole text.
+  const sentences = text.split(/(?<=[.!?。！？\n])/).map((x) => x.trim()).filter(Boolean);
+  const question = [...sentences].reverse().find((x) => /[?？]/.test(x));
+  if (question) {
+    const q = classify(question);
+    if (q !== "overview") return q;
+  }
+  return classify(text);
+}
+
+function classify(text: string): Intent {
   const s = text.toLowerCase();
-  if (/neighbou?r|other towns?|\btowns\b|\bcity\b|federat|邻|别的(小)?镇|其他(小)?镇|城/.test(s)) return "neighbors";
+  // Only explicit questions about other towns; "I'm from another town" just says where the visitor comes from.
+  if (/neighbou?r|other towns\b|which towns|\btowns\b.*\?|\bagent city\b|federat|邻|其他(小)?镇|哪些(小)?镇|城市|联邦/.test(s)) return "neighbors";
   if (/who'?s|\bwho\b|online|busy|status|stats|how many|right now|active|在线|谁|状态|多少|人数|忙/.test(s)) return "status";
   if (/join|move[- ]?in|onboard|register|sign ?up|install|\bhow\b|live here|入住|加入|注册|怎么|如何|搬/.test(s)) return "join";
   return "overview";
