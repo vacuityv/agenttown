@@ -7,7 +7,7 @@ import { RENDER_STYLES } from "./paint.js";
 import {
   CHUNK_PX, tileSize, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
   featureImage, gravePos, CEMETERY_CAP, drawLowLod, riverY, inPoly,
-  setTownhall, // Agent City
+  setTownhall, hallIndex, // Agent City
 } from "./village.js";
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
@@ -131,6 +131,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     setFeatures(features);
   }
 
+  let worldLoaded = false;
   async function loadWorld() {
     try {
       const w = await fetchWorld();
@@ -144,6 +145,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       totals.busy = w.totals.busy;
       updateHall();
       refreshFeatures();
+      worldLoaded = true;
       status.hidden = true;
       updateHeader();
       if (!framed) setTimeout(firstFrame, 0);
@@ -256,29 +258,40 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
   const zoomIndex = () => ZOOMS.indexOf(cam.zoom);
   function zoomBy(d) { zoomTo(zoomIndex() + d, W / dpr / 2, H / dpr / 2); }
-  // Frame the existing homes (the oldest ones sit in the middle of the spiral).
+  // Frame the town: centered on the Town Hall when there is one (else the oldest homes, which sit in the
+  // middle of the spiral), zoomed to fit the nearest ~15 homes.
   function frameHomes() {
-    const pts = [];
-    for (let k = 0; k < homes.length && pts.length < 15; k++) if (homes[k] && !homes[k].removed) pts.push(homeCenter(k));
+    let pts = [];
+    for (let k = 0; k < homes.length; k++) if (homes[k] && !homes[k].removed) pts.push(homeCenter(k));
     if (!pts.length) { cam.x = 0; cam.y = 0; return; }
+    const hall = hallIndex();
+    const [hx, hy] = hall !== null && homes[hall] && !homes[hall].removed ? homeCenter(hall) : pts[0];
+    pts = pts.sort((a, b) => Math.hypot(a[0] - hx, a[1] - hy) - Math.hypot(b[0] - hx, b[1] - hy)).slice(0, 15);
     const xs = pts.map((p) => p[0]), ys = pts.map((p) => p[1]);
-    const x0 = Math.min(...xs) - 110, x1 = Math.max(...xs) + 110, y0 = Math.min(...ys) - 100, y1 = Math.max(...ys) + 110;
-    cam.x = (x0 + x1) / 2; cam.y = (y0 + y1) / 2;
+    const half = (v, c) => Math.max(...v.map((t) => Math.abs(t - c)));
+    const rx = half(xs, hx) + 110, ry = half(ys, hy) + 110;
+    const x0 = hx - rx, x1 = hx + rx, y0 = hy - ry, y1 = hy + ry;
+    cam.x = hx; cam.y = hy;
     const cssW = W / dpr, cssH = H / dpr;
     let z = ZOOMS[0];
     for (const cand of ZOOMS) if (cand <= 2 && (x1 - x0) * cand <= cssW && (y1 - y0) * cand <= cssH) z = cand;
     cam.zoom = z;
   }
   function recenter() { frameHomes(); refreshResidents(); }
-  const CAM_KEY = "agenttown.cam";
+  const CAM_KEY = "agenttown.cam2"; // bumped when the Town Hall moved to the center
   function restoreCamera() {
     let c = null;
     try { c = JSON.parse(localStorage.getItem(CAM_KEY) ?? "null"); } catch {}
     if (c && Number.isFinite(c.x) && Number.isFinite(c.y) && ZOOMS.includes(c.zoom)) {
       Object.assign(cam, { x: c.x, y: c.y, zoom: c.zoom });
-      const v = view(-40);
-      const anyHome = homesIn(v.x0, v.y0, v.x1, v.y1, homes.length, 0).some((k) => homes[k] && !homes[k].removed);
-      if (anyHome) return; // the stored camera still shows somebody's home
+      // keep it only if a home sits well inside the view (not just a sliver at the edge)
+      const v = view(), mx = (v.x1 - v.x0) * 0.25, my = (v.y1 - v.y0) * 0.25;
+      const shown = homesIn(v.x0 + mx, v.y0 + my, v.x1 - mx, v.y1 - my, homes.length, 0).some((k) => {
+        if (!homes[k] || homes[k].removed) return false;
+        const [x, y] = homeCenter(k);
+        return x > v.x0 + mx && x < v.x1 - mx && y > v.y0 + my && y < v.y1 - my;
+      });
+      if (shown) return;
     }
     frameHomes();
   }
@@ -888,7 +901,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
 
   let framed = false;
-  const firstFrame = () => { if (framed || !homes.some(Boolean)) return; framed = true; restoreCamera(); runDemo(); refreshResidents(); };
+  // Frame once the full world snapshot is in (not just a few streamed homes) and the canvas has a size.
+  const firstFrame = () => { if (framed || !worldLoaded || !W || !H || !homes.some(Boolean)) return; framed = true; restoreCamera(); runDemo(); refreshResidents(); };
   loadWorld().then(firstFrame);
   const frameRetry = setInterval(() => { if (framed) clearInterval(frameRetry); else firstFrame(); }, 1000);
   if (!demo.has("graves")) loadCemetery();
