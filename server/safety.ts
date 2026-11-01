@@ -92,7 +92,17 @@ export const sayVisible = (homeId: string, s: { id?: unknown; persona_id?: strin
   !hidden.home.has(homeId) && !(s.persona_id && hidden.persona.has(s.persona_id)) &&
   !(s.id !== undefined && hidden.say.has(String(s.id)));
 export const redactSays = <T extends { id?: unknown; persona_id?: string }>(homeId: string, says: T[]) =>
-  says.filter((s) => sayVisible(homeId, s));
+  says.filter((s) => sayVisible(homeId, s)).map(redactSayRefs);
+
+// chat (server/chat.ts): a say's reply/mention snapshots name other residents; hidden ones lose their name.
+const hiddenRef = (r: { home_id?: string | null; persona_id?: string | null }) =>
+  (!!r.home_id && hidden.home.has(r.home_id)) || (!!r.persona_id && hidden.persona.has(r.persona_id));
+export function redactSayRefs<T extends Record<string, any>>(s: T): T {
+  const reply = s?.reply && hiddenRef(s.reply) ? { ...s.reply, name: HIDDEN_NAME } : s?.reply;
+  const mentions = Array.isArray(s?.mentions) && s.mentions.some(hiddenRef)
+    ? s.mentions.map((m: Record<string, any>) => (hiddenRef(m) ? { ...m, name: HIDDEN_NAME } : m)) : s?.mentions;
+  return reply === s?.reply && mentions === s?.mentions ? s : { ...s, reply, mentions };
+}
 
 export function redactTombstone<T extends Record<string, any>>(t: T): T {
   if (!t) return t;
@@ -126,7 +136,7 @@ export function redactEvent(e: BusEvent): BusEvent | null {
   switch (e.type) {
     case "home": return { ...e, data: redactHome(e.data as Row) };
     case "persona": return { ...e, data: redactPersona(e.data as Row) };
-    case "say": return sayVisible(e.home_id, e.data as Row) ? e : null;
+    case "say": return sayVisible(e.home_id, e.data as Row) ? { ...e, data: redactSayRefs(e.data as Row) } : null;
     case "tombstone":
     case "tombstone_update": return { ...e, data: redactTombstone(e.data as Row) };
     case "task": return { ...e, data: redactTask(e.data as Row) };

@@ -258,7 +258,8 @@ async function releaseChecks(cfg: any) {
   };
   const k = key("test-release.key"), wrong = key("other.key");
   const src = readFileSync(CLI, "utf8");
-  const NEXT = "1.2.99";
+  // A version just above the CLI under test (whatever the real CLI_VERSION is).
+  const NEXT = /export const CLI_VERSION = "([^"]+)"/.exec(src)![1].replace(/\d+$/, (n) => String(Number(n) + 99));
   const variant = (version: string, pub: string) => src
     .replace(`export const CLI_VERSION = "${cli.CLI_VERSION}"`, `export const CLI_VERSION = "${version}"`)
     .replace(`export const RELEASE_PUBKEY = "${cli.RELEASE_PUBKEY}"`, `export const RELEASE_PUBKEY = "${pub}"`);
@@ -326,7 +327,7 @@ async function releaseChecks(cfg: any) {
   await until("auto-update installed", () => version(u1.copy) === NEXT);
   assert.equal(version(`${u1.copy}.prev`), cli.CLI_VERSION, "old copy kept as .prev");
   assert.equal(statSync(u1.copy).mode & 0o777, 0o755, "mode kept");
-  assert.match(log(u1), /auto-update: installed CLI 1\.2\.99/);
+  assert.match(log(u1), new RegExp(`auto-update: installed CLI ${NEXT.replace(/\./g, "\\.")}`));
   m0 = await me();
   assert.equal(m0.cli.version, cli.CLI_VERSION, "hook reports carry the CLI version");
   assert.equal(m0.cli.outdated, true);
@@ -342,7 +343,7 @@ async function releaseChecks(cfg: any) {
   // Failure keeps the old file: the installed CLI trusts another key, so the server's signature does not verify.
   const u2 = machine("u2", {}, wrong.pub);
   assert.equal(hookAt(u2, { session_id: "upd-3", hook_event_name: "Stop" }), "");
-  await until("refusal logged", () => /auto-update to 1\.2\.99 refused: invalid signature/.test(log(u2)));
+  await until("refusal logged", () => new RegExp(`auto-update to ${NEXT.replace(/\./g, "\\.")} refused: invalid signature`).test(log(u2)));
   assert.equal(version(u2.copy), cli.CLI_VERSION);
   assert.ok(!existsSync(`${u2.copy}.prev`));
 
@@ -367,7 +368,7 @@ async function releaseChecks(cfg: any) {
   const u5 = machine("u5", { auto_update: false });
   const up = run(u5, ["update"]);
   assert.equal(up.status, 0, up.stderr);
-  assert.match(up.stdout, /1\.2\.99 installed .*\(signature verified\)/);
+  assert.match(up.stdout, new RegExp(`${NEXT.replace(/\./g, "\\.")} installed .*\\(signature verified\\)`));
   const u6 = machine("u6", {}, wrong.pub);
   const upLocal = run(u6, ["update"]);
   assert.equal(upLocal.status, 0, "localhost dev server: installs without a valid signature, with a note");

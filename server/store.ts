@@ -411,28 +411,55 @@ export async function customizeHome(id: string, patch: HomePatch) {
 
 export const SAYS_KEPT = 50;
 const saysSql = {
-  insert: "INSERT INTO says (home_id, persona_id, text, ts) VALUES (?, ?, ?, ?)",
+  // chat (server/chat.ts): reply_to / root_id / reply_* / mentions
+  insert: `INSERT INTO says (home_id, persona_id, text, ts, reply_to, root_id, reply_home, reply_persona, reply_name, mentions)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   // Keep the newest SAYS_KEPT per home. The derived table sidesteps MySQL's "no LIMIT in IN-subquery" rule.
   prune: `
     DELETE FROM says WHERE home_id = ? AND id <= (
       SELECT id FROM (SELECT id FROM says WHERE home_id = ? ORDER BY id DESC LIMIT 1 OFFSET ${SAYS_KEPT}) x)`,
-  recent: "SELECT CAST(id AS CHAR) AS id, persona_id, text, ts FROM says WHERE home_id = ? ORDER BY id DESC LIMIT ?",
+  recent: `SELECT CAST(id AS CHAR) AS id, persona_id, text, ts, CAST(reply_to AS CHAR) AS reply_to, reply_home, reply_persona,
+    reply_name, mentions FROM says WHERE home_id = ? ORDER BY id DESC LIMIT ?`,
 };
 
+// -- chat: a say's reply/mention fields (docs/protocol.md "Talking to other residents") --
+export type Mention = { home_id: string; persona_id: string | null; name: string };
+export type SayExtra = {
+  reply_to: string | null; root_id: string | null; reply_home: string | null; reply_persona: string | null;
+  reply_name: string | null; mentions: Mention[];
+};
+const parseMentions = (v: unknown): Mention[] => {
+  if (!v) return [];
+  try { const a = JSON.parse(String(v)); return Array.isArray(a) ? a : []; } catch { return []; }
+};
+/** Public say: {id, persona_id, text, ts, reply_to, reply: {home_id, persona_id, name} | null, mentions: [...]}. */
+export const sayOut = (r: Row) => ({
+  id: String(r.id), persona_id: r.persona_id as string, text: r.text as string, ts: Number(r.ts),
+  reply_to: r.reply_to == null ? null : String(r.reply_to),
+  reply: r.reply_to == null ? null
+    : { home_id: (r.reply_home ?? null) as string | null, persona_id: (r.reply_persona ?? null) as string | null, name: (r.reply_name ?? null) as string | null },
+  mentions: parseMentions(r.mentions),
+});
+// -- end chat --
+
 /** Posts a say for an existing persona. `check(personaId)` runs before the insert (rate limits). */
-export async function say(homeId: string, personaName: string, text: string, check: (personaId: string) => void) {
+export async function say(homeId: string, personaName: string, text: string, check: (personaId: string) => void, extra?: SayExtra) {
   const p = await one(db(), sql.personaByName, [homeId, personaName]);
   if (!p) throw new ApiError(404, "unknown_persona", "No persona with that name in this home. Create it first (`agenttown persona`).");
   check(p.id);
   const ts = Date.now();
-  const ins = await run(db(), saysSql.insert, [homeId, p.id, text, ts]);
+  const x = extra ?? { reply_to: null, root_id: null, reply_home: null, reply_persona: null, reply_name: null, mentions: [] };
+  const mentions = x.mentions.length ? JSON.stringify(x.mentions) : null;
+  const ins = await run(db(), saysSql.insert, [homeId, p.id, text, ts, x.reply_to, x.root_id, x.reply_home, x.reply_persona, x.reply_name, mentions]);
+  // A say that mentions someone and answers nobody starts a conversation of its own.
+  if (!x.reply_to && mentions) await run(db(), "UPDATE says SET root_id = id WHERE id = ?", [ins.insertId]);
   await run(db(), saysSql.prune, [homeId, homeId]);
-  const out = { id: String(ins.insertId), persona_id: p.id as string, text, ts };
+  const out = sayOut({ id: ins.insertId, persona_id: p.id, text, ts, ...x, mentions });
   bus.emit({ type: "say", home_id: homeId, data: out });
   return out;
 }
 
-export const recentSays = (homeId: string, limit = 10) => all(db(), saysSql.recent, [homeId, limit]);
+export const recentSays = async (homeId: string, limit = 10) => (await all(db(), saysSql.recent, [homeId, limit])).map(sayOut);
 
 // -- tombstones --
 

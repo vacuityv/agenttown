@@ -5,6 +5,7 @@ import { HomeSim, statusLine, spotLabel, setHomeMeta, onDwellingChange, planFor 
 import { t as tr, kindLabel as kindName } from "./i18n.js";
 import { spriteIcon } from "./sprites.js";
 import { fetchHomeTasks, MarketUnavailable } from "./market.js";
+import { fetchHomeTalk, threadNode } from "./talk.js"; // chat: conversations this home is part of
 import { coin } from "./tasks.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { cliNotice } from "./notices.js";
@@ -105,7 +106,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       for (const sid of [...sessions.keys()]) if (!open.has(sid)) applySession({ ...sessions.get(sid), status: "ended" }, true);
       if (first) { sim.setAgents(r.sessions); for (const s of r.sessions) { sessions.set(s.id, s); seenSessions.set(s.id, s.persona_id); } }
       else for (const s of r.sessions) applySession(s, true);
-      for (const m of r.says ?? []) sim.say(m.persona_id, m.text, m.ts);
+      for (const m of r.says ?? []) sim.say(m.persona_id, m.text, m.ts, m);
       saysLoaded = r.says ?? [];
       renderHead();
       schedulePanel();
@@ -131,8 +132,19 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   }
   let tlTimer = 0;
   function scheduleTimeline() { clearTimeout(tlTimer); tlTimer = setTimeout(renderTimeline, 400); }
+  // chat: a say with replies (from any home) is shown as one thread item; its says don't repeat as single lines.
+  let convs = [];
+  async function loadTalk() {
+    try { convs = await fetchHomeTalk(id); renderTimeline(); } catch {}
+  }
+  let talkTimer = 0;
+  function scheduleTalk() { clearTimeout(talkTimer); talkTimer = setTimeout(loadTalk, 600); }
   function renderTimeline() {
-    const items = [...groupEvents(rawEvents), ...saysLoaded.map((m) => ({ ts: m.ts, node: sayItem(m) }))];
+    const shown = convs.filter((c) => c.replies.length || (c.root && c.root.home_id !== id));
+    const inThread = new Set(shown.flatMap((c) => [c.root?.id, ...c.replies.map((r) => r.id)]).filter(Boolean));
+    const items = [...groupEvents(rawEvents),
+      ...shown.map((c) => ({ ts: c.last_ts, node: threadNode(c, { navigate, homeId: id, compact: true }) })),
+      ...saysLoaded.filter((m) => !inThread.has(m.id)).map((m) => ({ ts: m.ts, node: sayItem(m) }))];
     items.sort((a, b) => b.ts - a.ts);
     timeline.replaceChildren(...items.slice(0, 60).map((i) => i.node));
     if (!items.length) timeline.append(el("li", { class: "muted small", text: tr("home.noActivity") }));
@@ -217,12 +229,14 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const closeStream = openStream(`home=${encodeURIComponent(id)}`, {
     home: (h) => { if (h.id === id) { home = { ...home, ...h }; applyMeta(h); renderHead(); } },
     say: (m) => {
-      sim.say(m.persona_id, m.text, m.ts);
+      if (m.reply_to || m.mentions?.length) scheduleTalk(); // chat: also replies to / mentions of this home from elsewhere
+      if (m.home_id !== id) return;
+      sim.say(m.persona_id, m.text, m.ts, m);
       saysLoaded = [m, ...saysLoaded.filter((x) => x.id !== m.id)].slice(0, 30);
       scheduleTimeline();
     },
     persona: (p) => upsertPersona(p),
-    say_removed: () => { load(); loadEvents(); }, // moderation hid a say (or a persona/home): resync
+    say_removed: () => { load(); loadEvents(); loadTalk(); }, // moderation hid a say (or a persona/home): resync
     session: (s) => {
       applySession(s, true);
       rawEvents.push({ session_id: s.id, persona_id: s.persona_id, ts: Date.now(), status: s.status, tool: s.tool, task_no: s.task_no });
@@ -230,7 +244,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       scheduleTimeline();
     },
   }, {
-    onReconnect: () => { load(); loadEvents(); },
+    onReconnect: () => { load(); loadEvents(); loadTalk(); },
     onState: (st) => { live = st; renderHead(); },
   });
   const statsTimer = setInterval(loadStats, 60_000);
@@ -324,7 +338,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       el("time", { text: hhmm(m.ts ?? Date.now()), datetime: new Date(m.ts ?? Date.now()).toISOString() }),
       el("span", { class: "dot", style: "background:#ffffff" }),
       el("span", { class: "who", text: truncate(personas.get(m.persona_id)?.name ?? tr("home.someone"), 18) }),
-      el("span", { class: "what", text: `“${truncate(m.text ?? "", 120)}”` }));
+      el("span", { class: "what", text: `${m.reply ? `↩ @${m.reply.name ?? "?"} ` : ""}“${truncate(m.text ?? "", 120)}”` }));
   }
   function renderStats(st) {
     const days = [];
@@ -395,6 +409,18 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     const st = sim.stats();
     if (st.awake === 0) { ctx.fillStyle = "rgba(8, 10, 30, 0.42)"; ctx.fillRect(0, 0, W, H); }
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    // chat: a reply to a housemate draws a faint dotted line between them for a few seconds
+    for (const a of anchors) {
+      const r = a.ent.say?.until > performance.now() ? a.ent.say.reply : null;
+      if (!r || r.home_id !== id || t - a.ent.say.from > 5000) continue;
+      const to = anchors.find((b) => b !== a && b.ent.a?.persona_id === r.persona_id);
+      if (!to) continue;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255, 248, 236, ${0.55 * (1 - Math.max(0, t - a.ent.say.from - 3500) / 1500)})`;
+      ctx.lineWidth = Math.max(1, dpr); ctx.setLineDash([2 * dpr, 4 * dpr]); ctx.lineDashOffset = reduced ? 0 : -t / 60;
+      ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.quadraticCurveTo((a.x + to.x) / 2, Math.min(a.y, to.y) - 24 * dpr, to.x, to.y); ctx.stroke();
+      ctx.restore();
+    }
     for (const a of anchors) {
       if (a.ent.say && a.ent.say.until > performance.now()) drawSay(a);
       else if (a.ent.sleeper || a.ent.pose === "sleep") drawZzz(a, t);
@@ -429,7 +455,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   }
 
   function drawSay(a) {
-    const text = a.ent.say.text;
+    const r = a.ent.say.reply;
+    const text = `${r ? `↩ @${r.name ?? "?"} ` : ""}${a.ent.say.text}`;
     ctx.font = FONT(10, 500);
     const maxW = 170 * dpr, pad = 5 * dpr, lh = 12 * dpr;
     // wrap into up to 3 lines
@@ -527,6 +554,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     cancelAnimationFrame(raf);
     closeStream();
     clearInterval(statsTimer);
+    clearTimeout(talkTimer);
     clearTimeout(reloadTimer);
     clearTimeout(panelTimer);
     offOwner();
@@ -546,7 +574,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     } catch (e) { if (!(e instanceof MarketUnavailable)) tasksCard.hidden = true; }
   }
 
-  load().then(() => { if (!dead) { loadEvents(); loadStats(); loadTasks(); } });
+  load().then(() => { if (!dead) { loadEvents(); loadStats(); loadTasks(); loadTalk(); } });
   frame(performance.now());
 
   return () => {

@@ -13,6 +13,7 @@ import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { t as tr, kindLabel } from "./i18n.js";
 import { fetchTasks, demoTasks, MarketUnavailable } from "./market.js";
+import { mountTalkChip } from "./talk.js";
 import { el, hash32, clamp, fitCanvas, truncate, offscreen, prefersReducedMotion } from "./util.js";
 
 const ZOOMS = [0.25, 0.5, 1, 2, 3, 4];
@@ -85,6 +86,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   const status = el("div", { class: "map-status", text: tr("town.loading") });
   wrap.append(canvas, tip, controls, status);
   if (intro) wrap.append(intro);
+  const talkChip = mountTalkChip(wrap, navigate); // chat: "Town talk" — the latest public conversation, links to /talk
   root.append(wrap);
 
   const ctx = canvas.getContext("2d");
@@ -182,7 +184,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     counts: onCounts,
     agent: (a) => sims.get(a.home_id)?.sim.upsertAgent(a, true),
     persona: (p) => sims.get(p.home_id)?.sim.upsertPersona(p),
-    say: (m) => sims.get(m.home_id)?.sim.say(m.persona_id, m.text, m.ts),
+    say: (m) => { sims.get(m.home_id)?.sim.say(m.persona_id, m.text, m.ts, m); if (m.reply_to || m.mentions?.length) talkChip.refresh(); },
     tombstone: (t) => { graves.list.push(t); graves.total++; },
     task: onTask,
     tombstone_update: (t) => { const i = graves.list.findIndex((g) => g.id === t.id); if (i >= 0) graves.list[i] = t; },
@@ -319,7 +321,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         if (!v) { v = { sim: new HomeSim(h.id), loadedAt: 0 }; sims.set(h.id, v); }
         v.sim.setPersonas(demoSprites ? h.personas.map((p) => (demoSprites[p.name] ? { ...p, sprite: demoSprites[p.name] } : p)) : h.personas);
         v.sim.setAgents(h.agents);
-        for (const m of h.says ?? []) v.sim.say(m.persona_id, m.text, m.ts);
+        for (const m of h.says ?? []) v.sim.say(m.persona_id, m.text, m.ts, m);
         v.loadedAt = performance.now();
       }
       for (const id of ids) if (!sims.has(id)) sims.set(id, { sim: new HomeSim(id), loadedAt: performance.now() });
@@ -479,7 +481,9 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         el("strong", { text: p?.name ?? tr("kind.other") }),
         el("span", { class: "muted", text: `${h.ent.mini ? `${tr("town.subagent")} · ` : ""}${kindLabel(p?.kind ?? "other")}` }), // the house already says whose home it is
         el("span", { text: statusLine(h.ent) }));
-      if (h.ent.say && h.ent.say.until > performance.now()) tip.append(el("span", { class: "accent", text: `“${truncate(h.ent.say.text, 120)}”` }));
+      if (h.ent.say && h.ent.say.until > performance.now()) {
+        tip.append(el("span", { class: "accent", text: `${h.ent.say.reply ? `↩ @${h.ent.say.reply.name ?? "?"} ` : ""}“${truncate(h.ent.say.text, 120)}”` }));
+      }
       const o = owner();
       if (o && o.home.id === e.home.id && h.ent.a.task_enc) {
         const title = titleFor(e.home.id, h.ent.a.task_enc);
@@ -580,6 +584,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
 
     // homes
     const glows = [], labels = [], bubbles = [], zzz = [], smokes = [], halls = [];
+    const anchorAt = new Map(); // chat: "<home id>|<persona id>" → an on-screen anchor (for reply links)
     const o = owner();
     const visible = homesIn(v.x0, v.y0, v.x1, v.y1, n, 140);
     visible.sort((a, b) => homeCenter(a)[1] - homeCenter(b)[1]);
@@ -612,6 +617,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         const st = sim.sim.stats();
         awake = st.awake; busy = st.busy;
         for (const a of anchors) {
+          if (a.ent.a?.persona_id && !a.ent.mini) anchorAt.set(`${e.home.id}|${a.ent.a.persona_id}`, a);
           if (a.ent.say && a.ent.say.until > t) { bubbles.push({ a, say: true }); continue; }
           if (a.ent.sleeper || a.ent.pose === "sleep") { zzz.push([a.x + 3 * s, a.y + 2 * s, a.ent.seed]); continue; }
           bubbles.push({ a, mine: o?.home.id === e.home.id, homeId: e.home.id }); // always on, no hover needed
@@ -696,6 +702,25 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       ctx.font = FONT(Math.max(6, (3 * s) / dpr + 4), 700);
       ctx.fillText("z", zx + 8 * dpr + ph * 4 * dpr, zy - 10 * dpr - ph * 10 * dpr);
     }
+    // chat: a reply draws a faint dotted line to whoever it answers, for a few seconds, when both are on screen
+    for (const b of bubbles) {
+      const r = b.say && b.a.ent.say.reply;
+      if (!r || t - (b.a.ent.say.from ?? 0) > 5000) continue;
+      const to = anchorAt.get(`${r.home_id}|${r.persona_id}`);
+      if (!to || to === b.a) continue;
+      const fade = 1 - Math.max(0, t - b.a.ent.say.from - 3500) / 1500;
+      ctx.save();
+      ctx.strokeStyle = `rgba(255, 248, 236, ${0.55 * fade})`;
+      ctx.lineWidth = Math.max(1, dpr);
+      ctx.setLineDash([2 * dpr, 4 * dpr]);
+      ctx.lineDashOffset = reduced ? 0 : -t / 60;
+      ctx.beginPath();
+      ctx.moveTo(b.a.x, b.a.y - 4 * dpr);
+      const mx = (b.a.x + to.x) / 2, my = Math.min(b.a.y, to.y) - 18 * dpr - Math.hypot(to.x - b.a.x, to.y - b.a.y) * 0.15;
+      ctx.quadraticCurveTo(mx, my, to.x, to.y - 4 * dpr);
+      ctx.stroke();
+      ctx.restore();
+    }
     for (const b of bubbles) drawBubble(b, t);
 
     // task market cues
@@ -762,7 +787,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   function drawBubble(b, t) {
     const e = b.a.ent;
     let text;
-    if (b.say) text = `“${truncate(e.say.text, cam.zoom >= 3 ? 46 : 26)}”`;
+    if (b.say) text = `${e.say.reply ? `↩ @${truncate(e.say.reply.name ?? "?", 12)} ` : ""}“${truncate(e.say.text, cam.zoom >= 3 ? 46 : 26)}”`;
     else {
       text = e.a.status === "tool" ? truncate(e.a.tool || tr("st.toolGeneric"), cam.zoom >= 2 ? 24 : 10)
         : e.a.status === "thinking" ? "…" : e.a.status === "background" ? "⏳" : e.a.status === "waiting" ? "?" : e.ending ? tr("st.bye") : "";
@@ -874,6 +899,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     dead = true;
     cancelAnimationFrame(raf);
     closeStream();
+    talkChip.close();
     clearInterval(resyncEvery);
     clearInterval(residentTimer);
     clearTimeout(resyncTimer);

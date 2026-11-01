@@ -725,8 +725,9 @@ export class HomeSim {
     }
   }
 
-  // A resident says something (public `say` event): bubble for ~8 s.
-  say(personaId, text, ts = Date.now()) {
+  // A resident says something (public `say` event): bubble for ~8 s. `m` (the say object) may carry `reply`
+  // ({home_id, persona_id, name}): the bubble then starts with "↩ @Name" (chat, server/chat.ts).
+  say(personaId, text, ts = Date.now(), m = null) {
     const age = Date.now() - ts;
     if (age > 8000) return;
     let best = null;
@@ -734,7 +735,8 @@ export class HomeSim {
       if (e.a.persona_id !== personaId || e.dying) continue;
       if (!best || (best.sleeper && !e.sleeper) || (best.mini && !e.mini)) best = e;
     }
-    if (best) best.say = { text: String(text).slice(0, 280), until: performance.now() + 8000 - Math.max(0, age) };
+    const now = performance.now();
+    if (best) best.say = { text: String(text).slice(0, 280), until: now + 8000 - Math.max(0, age), from: now - Math.max(0, age), reply: m?.reply ?? null };
   }
 
   // ---- data in ----

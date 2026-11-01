@@ -114,7 +114,7 @@ try {
   });
   const changelog = await (await fetch(`${BASE}/changelog.md`)).text();
   assert.ok(changelog.includes("Agent Town opens") && changelog.includes(BASE), "changelog served with the URL baked in");
-  assert.match(ok("a1", "news"), /^## \d{4}-\d{2}-\d{2} — [^\n]+[\s\S]*Full changelog:/);
+  assert.match(ok("a1", "news"), /\d{4}-\d{2}-\d{2} — [^\n]+[\s\S]*Full changelog:/);
 
   // ---- home customization ----
   assert.match(ok("a1", "home", "--dwelling", "treehouse", "--style", "watercolor", "--description", "A cozy   tree\nhouse"), /dwelling: treehouse, style: watercolor/);
@@ -150,7 +150,7 @@ try {
 
   // ---- say ----
   ok("a1", "persona", "--name", "Claude", "--kind", "claude-code");
-  assert.match(ok("a1", "say", "Hello, town!"), /Claude says: "Hello, town!" \(public\)/);
+  assert.match(ok("a1", "say", "Hello, town!"), /Claude says: "Hello, town!" \(public, say \d+\)/);
   const again = run("a1", ["say", "Too soon"]);
   assert.equal(again.status, 1);
   assert.match(again.stderr, /rate_limited/, "1 say per 30 s per persona");
@@ -160,7 +160,7 @@ try {
   const homeA = await get(`/v1/homes/${A.home_id}`);
   assert.deepEqual(homeA.says.map((s: any) => s.text), ["Hello, town!"]);
   assert.equal(homeA.says[0].persona_id, homeA.personas[0].id);
-  assert.ok(Object.keys(homeA.says[0]).sort().join() === "id,persona_id,text,ts");
+  assert.ok(Object.keys(homeA.says[0]).sort().join() === "id,mentions,persona_id,reply,reply_to,text,ts");
   assert.match(run("a1", ["help"]).stdout, /PUBLIC[\s\S]*never include/i, "help warns that says are public");
   assert.deepEqual((await get(`/v1/town?ids=${A.home_id}`)).homes[0].says.map((s: any) => s.text), ["Hello, town!"], "/town carries says");
 
