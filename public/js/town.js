@@ -7,6 +7,7 @@ import { RENDER_STYLES } from "./paint.js";
 import {
   CHUNK_PX, tileSize, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
   featureImage, gravePos, CEMETERY_CAP, drawLowLod, riverY, inPoly,
+  setTownhall, // Agent City
 } from "./village.js";
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
@@ -116,6 +117,11 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     homes[idx] = e;
     byId.set(h.id, e);
   }
+  // Agent City: the (first) home with role "townhall" moves to the town center; extra townhalls are ignored.
+  function updateHall() {
+    const k = homes.findIndex((e) => e && !e.removed && e.home.role === "townhall");
+    if (setTownhall(k >= 0 ? k : null)) featuresFor = -1;
+  }
   function refreshFeatures() {
     if (featuresFor === homes.length) return;
     featuresFor = homes.length;
@@ -134,6 +140,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       totals.homes = w.totals.homes + fake;
       totals.open = w.totals.open;
       totals.busy = w.totals.busy;
+      updateHall();
       refreshFeatures();
       status.hidden = true;
       updateHeader();
@@ -169,6 +176,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     home: (h) => {
       const isNew = !byId.has(h.id);
       addHome({ open: 0, busy: 0, ...h });
+      updateHall();
       if (isNew) { totals.homes++; refreshFeatures(); updateHeader(); }
     },
     counts: onCounts,
@@ -181,7 +189,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     home_removed: (m) => {
       const e = byId.get(m.home_id);
       if (!e) return;
-      e.removed = true; totals.open -= e.open; totals.busy -= e.busy; e.open = e.busy = 0;
+      e.removed = true; updateHall(); totals.open -= e.open; totals.busy -= e.busy; e.open = e.busy = 0;
       sims.delete(m.home_id);
       updateHeader();
     },
@@ -389,7 +397,11 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   };
   window.addEventListener("keydown", onKey);
 
-  function boardPos() { const f = features.find((q) => q.kind === "plaza"); return f ? [f.x, f.y + 30] : null; }
+  function boardPos() {
+    const sq = features.find((q) => q.kind === "square"); // Agent City: the notice board stands on the Town Hall's square
+    if (sq) return [sq.x - sq.r - 10, sq.y + 24]; // just west of the hall, on the edge of its square
+    const f = features.find((q) => q.kind === "plaza"); return f ? [f.x, f.y + 30] : null;
+  }
   function cemeteries() { return features.filter((f) => f.kind === "cemetery"); }
   function graveAt(wx, wy) {
     const cs = cemeteries();
@@ -409,13 +421,17 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     if (g) return { grave: g };
     const b = boardPos();
     if (b && market.ok && Math.abs(wx - b[0]) < 16 && wy > b[1] - 34 && wy < b[1] + 10) return { board: true };
-    for (const f of features) if (Math.hypot(wx - f.x, wy - f.y) < 60) return { feature: f };
+    for (const f of features) {
+      if (f.kind === "signpost") { // the post plus its screen-space label above it
+        if (Math.abs(wx - f.x) < Math.max(24, 55 / cam.zoom) && wy < f.y + 12 && wy > f.y - 16 - 20 / cam.zoom) return { feature: f };
+      } else if (f.kind !== "square" && Math.hypot(wx - f.x, wy - f.y) < Math.min(60, f.r + 8)) return { feature: f };
+    }
     let best = null;
     for (const k of homesIn(wx - 10, wy - 10, wx + 10, wy + 10, n)) {
       const e = homes[k];
       if (!e || e.removed) continue;
       const l = homeLayout(k);
-      const ax = wx - l.ox, ay = wy - l.oy;
+      const ax = (wx - l.ox) / l.f, ay = (wy - l.oy) / l.f; // l.f: the Town Hall is drawn larger
       const v = sims.get(e.home.id);
       if (v && cam.zoom >= DETAIL_ZOOM) { const ent = v.sim.hitTest(ax, ay); if (ent) return { idx: k, ent, sim: v.sim }; }
       if (onFootprint(l.plan, ax, ay)) best = { idx: k };
@@ -427,7 +443,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
   function updateHover(px, py, type) {
     hover = pick(px, py);
-    canvas.style.cursor = hover && (hover.idx !== undefined || hover.grave || hover.board) ? "pointer" : "grab";
+    canvas.style.cursor = hover && (hover.idx !== undefined || hover.grave || hover.board || hover.feature?.kind === "signpost") ? "pointer" : "grab";
     if (!hover || type === "touch") { tip.hidden = true; return; }
     showTip(hover, px, py);
   }
@@ -472,6 +488,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     } else {
       const e = homes[h.idx];
       const line = e.open === 0 ? tr("town.lightsOff") : tr("town.homeLine", { n: e.open, open: e.open, busy: e.busy });
+      if (e.home.role === "townhall" && homeLayout(h.idx).hall) tip.append(el("span", { class: "accent", text: `${tr("town.hall")} — ${tr("town.hallText")}` }));
       tip.append(el("strong", { text: truncate(e.home.name, 40) }),
         e.home.description ? el("span", { class: "muted", text: truncate(e.home.description, 200) }) : null,
         el("span", { text: line }));
@@ -497,6 +514,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     if (h.board) { navigate("/tasks"); return; }
     else if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
     if (h.feature?.kind === "cemetery") { navigate("/cemetery"); return; }
+    if (h.feature?.kind === "signpost") { navigate("/neighbors"); return; } // Agent City
     if (h.feature) { hover = h; showTip(h, px, py); return; }
     if (h.idx === homes.length) { window.dispatchEvent(new Event("agenttown:invite")); return; }
     const e = homes[h.idx];
@@ -541,7 +559,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     // features
     const cs = cemeteries();
     for (const f of features) {
-      if (f.x + 90 < v.x0 || f.x - 90 > v.x1 || f.y + 90 < v.y0 || f.y - 90 > v.y1) continue;
+      const fr = Math.max(90, f.r + 20);
+      if (f.x + fr < v.x0 || f.x - fr > v.x1 || f.y + fr < v.y0 || f.y - fr > v.y1) continue;
       const ci = cs.indexOf(f);
       const count = ci < 0 ? 0 : clamp(graves.list.length - ci * CEMETERY_CAP, 0, CEMETERY_CAP);
       if (f.kind === "cemetery" && ci > 0 && count === 0) continue; // spare plots stay meadow until needed
@@ -560,7 +579,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     }
 
     // homes
-    const glows = [], labels = [], bubbles = [], zzz = [], smokes = [];
+    const glows = [], labels = [], bubbles = [], zzz = [], smokes = [], halls = [];
     const o = owner();
     const visible = homesIn(v.x0, v.y0, v.x1, v.y1, n, 140);
     visible.sort((a, b) => homeCenter(a)[1] - homeCenter(b)[1]);
@@ -574,7 +593,10 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         continue;
       }
       const plan = l.plan;
-      if (cam.zoom >= 0.5) {
+      const s0 = s, hs = s * l.f; // Agent City: the Town Hall is drawn larger (l.f), on its square instead of a garden
+      { const s = hs;
+      if (l.hall) { /* the square (a feature) is its ground */ }
+      else if (cam.zoom >= 0.5) {
         const g = homeGround(k, s);
         const [gx, gy] = toS(g.x, g.y);
         ctx.drawImage(g.img, R(gx), R(gy));
@@ -615,7 +637,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         if (plan.extras.chimney) smokes.push([X0 + (plan.extras.chimney[0] + 3) * s, Y0 + plan.extras.chimney[1] * s, busy, plan.seed]);
         if (plan.kind === "camp") smokes.push([X0 + (plan.furn.rug[0] + plan.furn.rug[2] / 2) * s, Y0 + (plan.furn.rug[1] + plan.furn.rug[3] / 2) * s, 1, plan.seed]);
       }
-      if (cam.zoom >= 0.5 || hover?.idx === k) labels.push([e, ccx, ccy + (l.ry + 8) * s]);
+      if (cam.zoom >= 0.5 || hover?.idx === k || l.hall) labels.push([e, ccx, ccy + (l.ry + 8) * s0, l.hall]);
+      if (l.hall) halls.push([X0, Y0, s, plan]);
       if (hover?.idx === k && !hover.ent) {
         ctx.strokeStyle = "rgba(255, 207, 110, 0.9)";
         ctx.lineWidth = Math.max(1, s);
@@ -625,6 +648,17 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         ctx.closePath();
         ctx.stroke();
       }
+      }
+    }
+    for (const [hx, hy, hs, plan] of halls) drawHallAccent(hx, hy, hs, plan, t);
+    // Agent City signpost text
+    for (const f of features) {
+      if (f.kind !== "signpost" || f.x < v.x0 - 80 || f.x > v.x1 + 80 || f.y < v.y0 - 40 || f.y > v.y1 + 40) continue;
+      const [sx, sy] = toS(f.x, f.y - 16);
+      ctx.font = FONT(10, 700); ctx.textAlign = "center"; ctx.textBaseline = "middle";
+      const text = tr("town.signCity"), w = ctx.measureText(text).width + 10 * dpr, h = 16 * dpr;
+      ctx.fillStyle = "rgba(20, 15, 28, 0.85)"; ctx.fillRect(R(sx - w / 2), R(sy - h), R(w), R(h));
+      ctx.fillStyle = "#8bd3c7"; ctx.fillText(text, sx, sy - h / 2 + dpr);
     }
     // where the next home will go
     {
@@ -680,7 +714,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         const e = homes[k];
         if (!e || e.removed || !market.busy.has(e.home.id)) continue;
         const l = homeLayout(k);
-        const [bx, by] = toS(l.ox + l.plan.ext.x1 - 4, l.oy + l.plan.ext.y0 + 2);
+        const [bx, by] = toS(l.ox + (l.plan.ext.x1 - 4) * l.f, l.oy + (l.plan.ext.y0 + 2) * l.f);
         drawBriefcase(bx, by);
       }
     }
@@ -704,9 +738,9 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     }
 
     // Home labels: name, plus a live status line (always visible, no hover needed) once zoomed in a bit.
-    for (const [e, lx, ly] of labels) {
+    for (const [e, lx, ly, hall] of labels) {
       ctx.font = FONT(11);
-      const text = truncate(e.home.name, cam.zoom >= 2 ? 28 : 18);
+      const text = hall ? tr("town.hall") : truncate(e.home.name, cam.zoom >= 2 ? 28 : 18);
       const sub = cam.zoom >= 0.8 ? (e.open ? tr("town.labelLine", { open: e.open, busy: e.busy }) : tr("town.labelAsleep")) : "";
       const tw = ctx.measureText(text).width;
       ctx.font = FONT(9, 500);
@@ -749,6 +783,30 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     ctx.fillRect(x, y + bounce + Math.round(h), Math.max(1, Math.round(w)), Math.max(1, Math.round(dpr)));
     ctx.fillStyle = b.say ? "#241a2b" : waiting ? "#5a2a10" : "#3a2a1a";
     ctx.fillText(text, b.a.x, y + bounce + h / 2 + dpr * 0.5);
+  }
+
+  // Agent City: a clock tower with a flag on top of the Town Hall (screen space, above the roofless interior).
+  function drawHallAccent(X0, Y0, s, plan, t) {
+    const ex = plan.ext, cx = X0 + ((ex.x0 + ex.x1) / 2) * s, top = Y0 + ex.y0 * s;
+    const u = Math.max(1, s * 0.9), R = Math.round;
+    const tw = 14 * u, th = 20 * u, tx = cx - tw / 2, ty = top - th + 4 * u;
+    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.fillRect(R(tx + 2 * u), R(ty + 2 * u), R(tw), R(th));
+    ctx.fillStyle = "#b9a98c"; ctx.fillRect(R(tx), R(ty), R(tw), R(th));
+    ctx.fillStyle = "#8e7f66"; ctx.fillRect(R(tx), R(ty + th - 3 * u), R(tw), R(3 * u));
+    ctx.fillStyle = "#6b3f2a"; ctx.beginPath(); ctx.moveTo(tx - 2 * u, ty); ctx.lineTo(cx, ty - 8 * u); ctx.lineTo(tx + tw + 2 * u, ty); ctx.closePath(); ctx.fill();
+    // clock face with real hands
+    const ccx = cx, ccy = ty + 7 * u, cr = 4.6 * u;
+    ctx.fillStyle = "#f3e9d2"; ctx.beginPath(); ctx.arc(ccx, ccy, cr, 0, 7); ctx.fill();
+    ctx.strokeStyle = "#3a2a1a"; ctx.lineWidth = Math.max(1, 0.6 * u); ctx.stroke();
+    const d = new Date(), hA = ((d.getHours() % 12) + d.getMinutes() / 60) / 12 * Math.PI * 2, mA = d.getMinutes() / 60 * Math.PI * 2;
+    ctx.beginPath(); ctx.moveTo(ccx, ccy); ctx.lineTo(ccx + Math.sin(hA) * cr * 0.55, ccy - Math.cos(hA) * cr * 0.55);
+    ctx.moveTo(ccx, ccy); ctx.lineTo(ccx + Math.sin(mA) * cr * 0.85, ccy - Math.cos(mA) * cr * 0.85); ctx.stroke();
+    // flag pole + waving flag
+    const px = cx, py = ty - 8 * u;
+    ctx.fillStyle = "#2a2436"; ctx.fillRect(R(px - 0.5 * u), R(py - 12 * u), Math.max(1, R(u)), R(12 * u));
+    const wave = reduced ? 0 : Math.sin(t / 400) * 1.2 * u;
+    ctx.fillStyle = "#ffcf6e"; ctx.beginPath(); ctx.moveTo(px + 0.5 * u, py - 12 * u);
+    ctx.quadraticCurveTo(px + 5 * u, py - 12 * u + wave, px + 9 * u, py - 10.5 * u); ctx.lineTo(px + 0.5 * u, py - 8 * u); ctx.closePath(); ctx.fill();
   }
 
   function drawBriefcase(x, y) {

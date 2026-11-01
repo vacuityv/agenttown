@@ -48,7 +48,29 @@ export function homeSlot(k) {
   }
   return homeSlots[k];
 }
-export const homeCenter = (k) => slotPos(homeSlot(k));
+// Agent City: the home with role "townhall" stands at the town center (the first village square), not on its slot.
+// Its own slot stays an empty lot; every other home keeps its slot. (setTownhall is called by the town view.)
+let hallIdx = null;
+let centerCache = null;
+export function townCenter() {
+  if (centerCache) return centerCache;
+  for (let s = 4, o = 0; ; s += 9, o++) {
+    if (nearRiver(s) || FEATURE_KINDS[o % FEATURE_KINDS.length] !== "plaza") continue;
+    const [x, y] = slotPos(s);
+    return (centerCache = { slot: s, x, y });
+  }
+}
+export const HALL_SCALE = 1.4; // the Town Hall is drawn a bit larger than a home
+export const hallIndex = () => hallIdx;
+export function setTownhall(k) {
+  k = Number.isInteger(k) ? k : null;
+  if (k === hallIdx) return false;
+  hallIdx = k;
+  buckets.clear(); indexed = 0; // the spatial index used the old position
+  invalidateAll();
+  return true;
+}
+export const homeCenter = (k) => (k === hallIdx ? [townCenter().x, townCenter().y] : slotPos(homeSlot(k)));
 
 // features: every feature slot that isn't in the river
 const FEATURE_KINDS = ["plaza", "cemetery", "pond", "grove", "meadow", "orchard", "plaza", "grove", "pond", "meadow", "well", "grove"];
@@ -57,9 +79,22 @@ export function featuresUpTo(maxSlot) {
   for (let s = 4, o = 0; s <= maxSlot; s += 9, o++) {
     if (nearRiver(s)) continue;
     const [x, y] = slotPos(s);
-    out.push({ slot: s, ord: o, kind: FEATURE_KINDS[o % FEATURE_KINDS.length], x, y, r: 70 });
+    const square = hallIdx !== null && s === townCenter().slot; // the Town Hall's square replaces the central plaza
+    out.push({ slot: s, ord: o, kind: square ? "square" : FEATURE_KINDS[o % FEATURE_KINDS.length], x, y, r: square ? 112 : 70 });
   }
+  if (hallIdx !== null) { const [x, y] = slotPos(homeSlot(hallIdx)); out.push({ slot: -1, ord: -1, kind: "lot", x, y, r: 52 }); }
+  out.push({ slot: -2, ord: -2, kind: "signpost", ...signpostPos(maxSlot), r: 22 });
   return out;
+}
+
+// Agent City signpost: just beyond the explored area (north-east, away from the river), deterministic per town size.
+export function signpostPos(maxSlot) {
+  const r = SPACING * Math.sqrt(maxSlot + 0.6) + 60;
+  for (let a = -0.9; a > -2.4; a -= 0.15) {
+    const x = r * Math.cos(a), y = r * Math.sin(a);
+    if (Math.abs(y - riverY(x)) > RIVER_CLEAR) return { x, y };
+  }
+  return { x: r * Math.cos(-0.9), y: r * Math.sin(-0.9) };
 }
 
 // ---------- spatial index of homes ----------
@@ -97,11 +132,12 @@ export function homeLayout(k) {
   const plan = planFor(id ?? `slot-${k}`);
   const [cx, cy] = homeCenter(k);
   const ex = plan.ext;
-  const ox = Math.round(cx - (ex.x0 + ex.x1) / 2), oy = Math.round(cy - (ex.y0 + ex.y1) / 2);
-  const rx = (ex.x1 - ex.x0) / 2 + 18, ry = (ex.y1 - ex.y0) / 2 + 18;
+  const f = k === hallIdx ? HALL_SCALE : 1; // f: drawing scale of this home (plan units -> world)
+  const ox = Math.round(cx - ((ex.x0 + ex.x1) / 2) * f), oy = Math.round(cy - ((ex.y0 + ex.y1) / 2) * f);
+  const rx = ((ex.x1 - ex.x0) / 2) * f + 18, ry = ((ex.y1 - ex.y0) / 2) * f + 18;
   const [fx, fy, fw] = plan.front;
-  const door = [ox + fx + fw / 2, oy + fy + 3 + (plan.extras.porch ? 7 : 0) + 4];
-  l = { k, id, plan, ox, oy, cx, cy, rx, ry, door };
+  const door = [ox + (fx + fw / 2) * f, oy + (fy + 3 + (plan.extras.porch ? 7 : 0) + 4) * f];
+  l = { k, id, plan, ox, oy, cx, cy, rx, ry, door, f, hall: k === hallIdx };
   if (layoutCache.size > 6000) layoutCache.delete(layoutCache.keys().next().value);
   layoutCache.set(key, l);
   return l;
@@ -401,13 +437,36 @@ export function featureImage(f, graves, s) {
   const key = `${f.slot}|${f.kind}|${season()}|${f.kind === "cemetery" ? Math.ceil(graves / 8) : 0}|${s}`;
   let img = featCache.get(key);
   if (img) return img;
-  const [cv, c] = newCanvas(FEAT * s, FEAT * s);
+  const size = f.kind === "square" ? 2 * f.r + 24 : FEAT;
+  const [cv, c] = newCanvas(size * s, size * s);
   c.scale(s, s);
   c.lineCap = "round"; c.lineJoin = "round";
-  const m = FEAT / 2;
+  const m = size / 2;
   const r = rng(hash32("feat" + f.slot));
   const pal = palette();
-  if (f.kind === "plaza") {
+  if (f.kind === "square") { // Agent City: the paved town square under the Town Hall (no fountain: the hall stands here)
+    const R0 = f.r;
+    polyPath(c, blobPoly(m, m, R0, R0 * 0.86, f.slot, 36, 0.04));
+    const g = c.createRadialGradient(m, m, 10, m, m, R0); g.addColorStop(0, "#6f6878"); g.addColorStop(1, "#4a4556"); c.fillStyle = g; c.fill();
+    c.strokeStyle = "rgba(20,15,28,0.5)"; c.lineWidth = 1.2; c.stroke();
+    c.strokeStyle = "rgba(255,255,255,0.05)"; c.lineWidth = 0.6;
+    for (let rr = 18; rr < R0 - 4; rr += 7) { c.beginPath(); c.ellipse(m, m, rr, rr * 0.86, 0, 0, 7); c.stroke(); }
+    for (let i = 0; i < 8; i++) { const a = (i / 8) * Math.PI * 2 + 0.2; lamp(c, m + Math.cos(a) * (R0 - 9), m + Math.sin(a) * (R0 - 9) * 0.86); }
+    for (const [x, y] of [[m - R0 * 0.62, m + R0 * 0.55], [m + R0 * 0.5, m - R0 * 0.62]]) { c.fillStyle = "#7a5a40"; c.beginPath(); c.roundRect?.(x, y, 11, 3.5, 1.2); c.fill(); }
+  } else if (f.kind === "lot") { // the Town Hall's own slot: an empty lot
+    c.fillStyle = "rgba(90, 74, 58, 0.55)"; c.beginPath(); c.ellipse(m, m, 40, 30, 0, 0, 7); c.fill();
+    c.strokeStyle = "rgba(236,226,206,0.55)"; c.lineWidth = 0.5; c.setLineDash([2, 2]);
+    c.strokeRect(m - 30, m - 20, 60, 40); c.setLineDash([]);
+    for (const [x, y] of [[m - 30, m - 20], [m + 30, m - 20], [m - 30, m + 20], [m + 30, m + 20]]) { c.fillStyle = "#7a5a40"; c.fillRect(x - 0.8, y - 3, 1.6, 4); }
+    for (let i = 0; i < 6; i++) grass(c, m - 24 + r() * 48, m - 14 + r() * 28);
+  } else if (f.kind === "signpost") { // Agent City signpost (its text is drawn by the town view)
+    c.fillStyle = "rgba(0,0,0,0.25)"; c.beginPath(); c.ellipse(m + 1, m + 9, 6, 2, 0, 0, 7); c.fill();
+    c.fillStyle = "#5a4232"; c.fillRect(m - 1, m - 10, 2.2, 19);
+    c.fillStyle = "#8a6a4a"; c.beginPath(); c.moveTo(m - 9, m - 10); c.lineTo(m + 8, m - 10); c.lineTo(m + 12, m - 7); c.lineTo(m + 8, m - 4); c.lineTo(m - 9, m - 4); c.closePath(); c.fill();
+    c.fillStyle = "#ffd27a"; c.beginPath(); c.moveTo(m + 2, m - 9); c.lineTo(m + 6, m - 7); c.lineTo(m + 2, m - 5); c.closePath(); c.fill();
+    c.fillRect(m - 6, m - 7.6, 8, 1.2);
+    flowers(c, m - 8, m + 4, r, pal);
+  } else if (f.kind === "plaza") {
     const p = blobPoly(m, m, 52, 44, f.slot, 28, 0.06);
     polyPath(c, p); const g = c.createRadialGradient(m, m, 6, m, m, 56); g.addColorStop(0, "#6f6878"); g.addColorStop(1, "#4f4a5a"); c.fillStyle = g; c.fill();
     c.strokeStyle = "rgba(255,255,255,0.06)"; c.lineWidth = 0.6;
@@ -458,7 +517,7 @@ export function featureImage(f, graves, s) {
     const dim = { ...pal, leaf: ["#34463c", "#44584c", "#2a3a32"] };
     tree(c, m - rr - 6, m - rr * 0.6, r, dim, 1.2); tree(c, m + rr - 8, m - rr * 0.8, r, dim, 1.1);
   }
-  img = { img: cv, size: FEAT };
+  img = { img: cv, size };
   featCache.set(key, img);
   if (featCache.size > 60) featCache.delete(featCache.keys().next().value);
   return img;

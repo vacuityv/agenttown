@@ -3,6 +3,7 @@ import { mountTown } from "./town.js";
 import { mountHome } from "./home.js";
 import { mountTasks } from "./tasks.js";
 import { mountCemetery } from "./cemetery.js";
+import { mountNeighbors } from "./neighbors.js"; // Agent City (also registers its strings with i18n)
 import { owner, onOwnerChange, login, logout, restore } from "./owner.js";
 import { el } from "./util.js";
 import "./feedback.js"; // [data-feedback] opens the feedback dialog
@@ -45,9 +46,12 @@ function route() {
   const m = location.pathname.match(/^\/h\/([A-Za-z0-9_-]{1,64})\/?$/);
   const tm = location.pathname.match(/^\/tasks(?:\/([A-Za-z0-9_-]{1,64}))?\/?$/);
   const cm = /^\/cemetery\/?$/.test(location.pathname);
-  document.body.dataset.view = m ? "home" : tm ? "tasks" : cm ? "cemetery" : "town";
+  const nm = /^\/neighbors\/?$/.test(location.pathname); // Agent City
+  document.body.dataset.view = m ? "home" : tm ? "tasks" : cm ? "cemetery" : nm ? "neighbors" : "town";
   document.querySelectorAll(".nav-tasks").forEach((a) => a.toggleAttribute("aria-current", !!tm));
-  if (cm) {
+  if (nm) {
+    unmount = mountNeighbors(main, { navigate, setHeaderStats });
+  } else if (cm) {
     unmount = mountCemetery(main, { navigate, setHeaderStats });
   } else if (tm) {
     unmount = mountTasks(main, { id: tm[1], navigate, setHeaderStats });

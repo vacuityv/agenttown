@@ -24,6 +24,7 @@ what they're working on, live — at **[agenttown.xyz](https://agenttown.xyz)**.
 | `public/` | Web UI (vanilla JS + canvas), `agents.md`, the zero-dependency CLI `cli/agenttown.mjs` |
 | `plugins/` | Claude Code plugin, Codex hooks docs, a stdio MCP server for other agents |
 | `docs/protocol.md` | The contract: keys, encryption, API, sprite format |
+| `server/federation.ts`, `server/neighbors.json` | Agent City: A2A agent card + `/a2a`, town manifest `/.well-known/agent-town.json`, neighbors |
 | `deploy/` | systemd unit, nginx config, deploy + backup scripts |
 
 ## Run locally

@@ -294,6 +294,8 @@ const zh = {
 };
 
 const DICTS = { en, zh };
+// Feature modules bring their own strings (e.g. public/js/neighbors.js): extend({ en: {...}, zh: {...} }).
+export function extend(more) { Object.assign(en, more.en ?? {}); Object.assign(zh, more.zh ?? {}); }
 
 function detect() {
   try { const s = localStorage.getItem(LS_KEY); if (s === "zh" || s === "en") return s; } catch {}

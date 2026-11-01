@@ -10,6 +10,7 @@
 //   node scripts/admin.mjs resolve <task_id> poster|assignee|split [coins to assignee]
 //   node scripts/admin.mjs feedback [--all] [--json]     suggestions / bug reports sent to the operator
 //   node scripts/admin.mjs feedback-done <id> | feedback-archive <id> | feedback-reopen <id>
+//   node scripts/admin.mjs set-role <home_id> townhall|null   civic role (Agent City); one townhall at a time
 const [cmd, ...args] = process.argv.slice(2);
 const BASE = (process.env.ADMIN_URL ?? "").replace(/\/$/, "");
 const TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -29,7 +30,8 @@ function usage(code = 1) {
                                      assignee, the rest back to the poster; default half)
   (hide/unhide/dismiss also take kind "task")
   feedback [--all] [--json]          feedback to the operator (open by default; --all includes done/archived)
-  feedback-done <id> | feedback-archive <id> | feedback-reopen <id>`);
+  feedback-done <id> | feedback-archive <id> | feedback-reopen <id>
+  set-role <home_id> townhall|null   civic role: the townhall sits at the town center (moves it from any other home)`);
   process.exit(code);
 }
 
@@ -144,6 +146,13 @@ switch (cmd) {
     const status = { "feedback-done": "done", "feedback-archive": "archived", "feedback-reopen": "open" }[cmd];
     const r = await call("POST", `/feedback/${encodeURIComponent(args[0])}`, { status });
     console.log(`${r.id}: ${r.status}`);
+    break;
+  }
+  case "set-role": { // Agent City (server/roles.ts)
+    const [home_id, role] = args;
+    if (!home_id || !["townhall", "null", "none"].includes(role)) usage();
+    const r = await call("POST", `/homes/${encodeURIComponent(home_id)}/role`, { role: role === "townhall" ? role : null });
+    console.log(`${r.home_id}: role ${r.role ?? "none"}${r.cleared.length ? ` (cleared from ${r.cleared.join(", ")})` : ""}`);
     break;
   }
   case "help": case "--help": case "-h": usage(0); break;
