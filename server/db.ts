@@ -433,6 +433,14 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
       ) ${T}`,
     ],
   },
+  // ---- Agent City: home roles (server/roles.ts). Versions >= 700. ----
+  {
+    version: 700,
+    statements: [
+      "ALTER TABLE homes ADD COLUMN role VARCHAR(16) NULL", // townhall | NULL (set by the operator only)
+    ],
+  },
+  // ---- end Agent City ----
 ];
 
 export async function initDb() {

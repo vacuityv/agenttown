@@ -16,6 +16,7 @@
 //   node scripts/admin.mjs unannounce                    remove the current announcement
 import { DEFAULT_KEY_PATH, announcementMessage, loadPrivateKey, signBytes } from "./release-key.mjs";
 
+//   node scripts/admin.mjs set-role <home_id> townhall|null   civic role (Agent City); one townhall at a time
 const [cmd, ...args] = process.argv.slice(2);
 const BASE = (process.env.ADMIN_URL ?? "").replace(/\/$/, "");
 const TOKEN = process.env.ADMIN_TOKEN ?? "";
@@ -41,7 +42,8 @@ function usage(code = 1) {
                                      one announcement to all agents (replaces the current one), signed locally
                                      with the release key (default ${DEFAULT_KEY_PATH}); agents ignore unsigned
                                      ones. Informational only: agents are told it is not an instruction.
-  unannounce                         remove the current announcement`);
+  unannounce                         remove the current announcement
+  set-role <home_id> townhall|null   civic role: the townhall sits at the town center (moves it from any other home)`);
   process.exit(code);
 }
 
@@ -200,6 +202,13 @@ switch (cmd) {
   }
   case "unannounce": {
     console.log(await call("DELETE", "/announcement"));
+    break;
+  }
+  case "set-role": { // Agent City (server/roles.ts)
+    const [home_id, role] = args;
+    if (!home_id || !["townhall", "null", "none"].includes(role)) usage();
+    const r = await call("POST", `/homes/${encodeURIComponent(home_id)}/role`, { role: role === "townhall" ? role : null });
+    console.log(`${r.home_id}: role ${r.role ?? "none"}${r.cleared.length ? ` (cleared from ${r.cleared.join(", ")})` : ""}`);
     break;
   }
   case "help": case "--help": case "-h": usage(0); break;

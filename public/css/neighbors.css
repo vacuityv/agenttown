@@ -1,0 +1,45 @@
+/* Agent City: the /neighbors page (public/js/neighbors.js). Uses the tokens from app.css. */
+.nb-page { width: 100%; max-width: 1100px; margin: 0 auto; padding: 16px; display: flex; flex-direction: column; gap: 18px; }
+.nb-page .back { font: 13px var(--mono); text-decoration: none; }
+.nb-head h1 { margin: 4px 0; font: 700 26px var(--mono); }
+.nb-head p { margin: 2px 0; max-width: 72ch; }
+.nb-page h2 { margin: 0 0 6px; font: 700 18px var(--mono); }
+.nb-page h3 { margin: 0; font: 700 15px/1.3 var(--mono); overflow-wrap: anywhere; }
+.nb-page .card { padding: 16px; }
+
+.nb-us { border-color: var(--accent); display: flex; flex-direction: column; gap: 6px; }
+.nb-us p { margin: 0; }
+.nb-stats { display: flex; flex-wrap: wrap; gap: 10px 26px; margin: 6px 0 2px; }
+.nb-stat { display: flex; align-items: baseline; gap: 6px; font-family: var(--mono); }
+.nb-stat b { font-size: 26px; color: var(--text); }
+.nb-stat.online b { color: var(--accent2); }
+.nb-stat.busy b { color: var(--accent); }
+
+.nb-badge { display: inline-block; align-self: flex-start; padding: 1px 8px; border-radius: 999px; font: 600 11px/1.6 var(--mono);
+  border: 1px solid var(--line); color: var(--muted); white-space: nowrap; }
+.nb-badge.here { color: var(--bg); background: var(--accent); border-color: var(--accent); }
+.nb-badge.rel-mutual { color: var(--bg); background: var(--accent2); border-color: var(--accent2); }
+
+.nb-count { margin: 0 0 10px; font-family: var(--mono); }
+.nb-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.nb-card { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.nb-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+.nb-card p { margin: 0; }
+.nb-notes { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+.nb-actions { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: auto !important; padding-top: 6px; }
+.nb-actions a { text-decoration: none; }
+
+.nb-how { display: flex; flex-direction: column; gap: 8px; }
+.nb-how p { margin: 0; max-width: 80ch; }
+.nb-how h3 { margin-top: 6px; color: var(--accent2); }
+.nb-how code a { color: var(--accent); overflow-wrap: anywhere; }
+.nb-links { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.nb-example { margin: 0; padding: 10px 12px; background: var(--bg2); border: 1px solid var(--line); border-radius: 6px;
+  overflow-x: auto; font-size: 12px; line-height: 1.5; max-width: 100%; }
+.nb-example code { background: none; padding: 0; white-space: pre; }
+
+@media (max-width: 640px) {
+  .nb-page { padding: 12px 16px; }
+  .nb-grid { grid-template-columns: 1fr; }
+  .nb-head h1 { font-size: 22px; }
+}

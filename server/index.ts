@@ -17,6 +17,8 @@ import { mountFeedback } from "./feedback.ts";
 import * as release from "./release.ts";
 import * as market from "./market.ts";
 import { MARKET } from "./config.ts";
+import { mountFederation, startNeighborChecker } from "./federation.ts"; // Agent City
+import { mountRoles } from "./roles.ts"; // Agent City
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
 } from "./util.ts";
@@ -440,10 +442,13 @@ api.get("/stream", (c) => {
 });
 
 release.mountRelease(app, api); // /cli/agenttown.mjs.sig, /cli/release.json, /v1/admin/announcement, /v1/admin/homes
+mountRoles(api); // Agent City: POST /v1/admin/homes/:id/role (server/roles.ts)
 mountFeedback(api); // POST /v1/feedback (public, private to the operator), /v1/admin/feedback (server/feedback.ts)
 safety.mountSafety(api); // POST /v1/reports, /v1/admin/* (server/safety.ts)
 market.mountMarket(api, requireAuth); // task market: /v1/tasks..., /v1/wallet, /v1/inbox, /v1/home/box-key (server/market.ts)
 app.route("/v1", api);
+
+mountFederation(app); // Agent City: /.well-known/agent-card.json, /.well-known/agent-town.json, /a2a, /neighbors
 
 // ---- static: agents.md and the CLI get the public URL baked in ----
 
@@ -479,5 +484,6 @@ try {
 
 startAvatarWorker();
 market.startMarketSweeper();
+startNeighborChecker(); // Agent City
 
 serve({ fetch: app.fetch, port: PORT }, () => console.log(`agenttown listening on :${PORT} (${PUBLIC_URL})`));

@@ -12,7 +12,7 @@ const day = (t: number) => new Date(t).toISOString().slice(0, 10);
 
 const sql = {
   homeByAuth: "SELECT id, slot, name, created_at, dwelling, style, description FROM homes WHERE auth_hash = ?",
-  homeById: `SELECT id, slot, name, created_at, dwelling, style, description, look, art, art_status, art_error,
+  homeById: `SELECT id, slot, name, created_at, dwelling, style, description, look, art, art_status, art_error, role,
     box_pub, rep_posted, rep_done, rep_rating_sum, rep_rating_n FROM homes WHERE id = ?`,
   insertHome: "INSERT INTO homes (id, auth_hash, name, created_at) VALUES (?, ?, ?, ?)",
   renameHome: "UPDATE homes SET name = ? WHERE id = ?",
@@ -73,6 +73,7 @@ export const publicHome = (h: Row) => ({
   ...publicLook(h),
   // task market: E2E box public key and public reputation (docs/protocol.md "Task market")
   box_pub: h.box_pub ?? null, rep: market.publicRep(h),
+  role: h.role ?? null, // Agent City: civic role set by the operator, e.g. "townhall" (server/roles.ts)
 });
 
 // Dwelling art (docs/protocol.md "Dwelling art v1"); a separate helper so other publicHome fields merge cleanly.
@@ -325,7 +326,7 @@ export async function town(homeIds: string[]) {
 // ---- world / stats ----
 
 const worldSql = `
-  SELECT h.id, h.slot, h.name, h.created_at, h.dwelling, h.style, h.description,
+  SELECT h.id, h.slot, h.name, h.created_at, h.dwelling, h.style, h.description, h.role,
     h.box_pub, h.rep_posted, h.rep_done, h.rep_rating_sum, h.rep_rating_n,
     COUNT(s.id) AS open,
     COALESCE(SUM(s.status IN ('thinking', 'tool', 'background')), 0) AS busy

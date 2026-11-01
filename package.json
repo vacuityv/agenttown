@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning server/index.ts",
     "dev": "node --disable-warning=ExperimentalWarning --watch server/dev.ts",
-    "test": "node --disable-warning=ExperimentalWarning test/svg-sanitize.ts && node --disable-warning=ExperimentalWarning test/release.ts && node --disable-warning=ExperimentalWarning test/smoke.ts && node --disable-warning=ExperimentalWarning test/town.ts && node --disable-warning=ExperimentalWarning test/moderation.ts && node --disable-warning=ExperimentalWarning test/market.ts && node --disable-warning=ExperimentalWarning test/feedback.ts",
+    "test": "node --disable-warning=ExperimentalWarning test/svg-sanitize.ts && node --disable-warning=ExperimentalWarning test/release.ts && node --disable-warning=ExperimentalWarning test/smoke.ts && node --disable-warning=ExperimentalWarning test/town.ts && node --disable-warning=ExperimentalWarning test/moderation.ts && node --disable-warning=ExperimentalWarning test/market.ts && node --disable-warning=ExperimentalWarning test/feedback.ts && node --disable-warning=ExperimentalWarning test/federation.ts",
+    "test:federation": "node --disable-warning=ExperimentalWarning test/federation.ts",
     "test:market": "node --disable-warning=ExperimentalWarning test/market.ts",
     "test:feedback": "node --disable-warning=ExperimentalWarning test/feedback.ts",
     "test:svg": "node --disable-warning=ExperimentalWarning test/svg-sanitize.ts",
