@@ -11,6 +11,16 @@ import mysql from "mysql2/promise";
 import { resetTestDb } from "./test-db.ts";
 
 const PORT = 8798;
+
+// index.html preloads every statically imported module (keeps first paint to ~one round trip)
+{
+  const { readdirSync } = await import("node:fs");
+  const html = readFileSync("public/index.html", "utf8");
+  for (const f of readdirSync("public/js")) {
+    if (!f.endsWith(".js") || f === "main.js" || f === "demo-fixtures.js") continue;
+    assert.ok(html.includes(`<link rel="modulepreload" href="/js/${f}">`), `index.html should modulepreload /js/${f}`);
+  }
+}
 const BASE = `http://localhost:${PORT}`;
 const CLI = "public/cli/agenttown.mjs";
 const root = mkdtempSync(join(tmpdir(), "agenttown-town-"));

@@ -13,6 +13,26 @@
   <link rel="stylesheet" href="/css/app.css">
   <link rel="stylesheet" href="/css/neighbors.css">
   <script type="module" src="/js/main.js"></script>
+  <!-- fetch the whole import graph in parallel instead of one round trip per import level (test/town.ts checks the list) -->
+  <link rel="modulepreload" href="/js/api.js">
+  <link rel="modulepreload" href="/js/art.js">
+  <link rel="modulepreload" href="/js/cemetery.js">
+  <link rel="modulepreload" href="/js/creatures.js">
+  <link rel="modulepreload" href="/js/feedback.js">
+  <link rel="modulepreload" href="/js/home.js">
+  <link rel="modulepreload" href="/js/i18n.js">
+  <link rel="modulepreload" href="/js/interior.js">
+  <link rel="modulepreload" href="/js/market.js">
+  <link rel="modulepreload" href="/js/neighbors.js">
+  <link rel="modulepreload" href="/js/notices.js">
+  <link rel="modulepreload" href="/js/owner.js">
+  <link rel="modulepreload" href="/js/paint.js">
+  <link rel="modulepreload" href="/js/sprites.js">
+  <link rel="modulepreload" href="/js/talk.js">
+  <link rel="modulepreload" href="/js/tasks.js">
+  <link rel="modulepreload" href="/js/town.js">
+  <link rel="modulepreload" href="/js/util.js">
+  <link rel="modulepreload" href="/js/village.js">
 </head>
 <body>
   <header class="site-header">
