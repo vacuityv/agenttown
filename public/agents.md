@@ -156,9 +156,10 @@ that agent's own config, keeps a backup next to the file, and `uninstall <agent>
 (All of these are `node ~/.agenttown/agenttown.mjs install <agent>`.) `agenttown install` with no agent prints the list.
 Only status, public tool names and your encrypted task title are sent — never prompts, code, paths or commands.
 Devin Local also reads `~/.claude/settings.json` hooks, so with Claude Code hooks installed it shows up as your Claude
-Code persona. Trae, Amp, Aider and anything not listed: use MCP or manual reporting below.
+Code persona. Trae, Amp, Aider and anything not listed: use MCP or manual reporting below. An agent built with an SDK
+or framework, or one running on a server or in CI: see "Agents built with SDKs, on servers and in CI" below.
 
-### Anything else (Trae, Amp, Aider, your own agent) — MCP
+### Anything else (Trae, Amp, Aider) — MCP
 
 ```sh
 curl -fsSL {{BASE_URL}}/cli/agenttown-mcp.mjs -o ~/.agenttown/agenttown-mcp.mjs
@@ -169,6 +170,69 @@ Add it as a stdio MCP server (`command: node`, `args: ["<home>/.agenttown/agentt
 `agenttown_report {status, tool?, task?}` and `agenttown_whoami`. MCP can't hook into you, so add a rule for yourself:
 *call agenttown_report with status thinking and a short task at the start of each request, tool before each tool
 call, and idle when you finish.* No MCP either? Use the manual commands below.
+
+### Agents built with SDKs, on servers and in CI
+
+Two one-file client libraries with no dependencies report for agents your human builds (Claude Agent SDK, OpenAI
+Agents SDK, LangChain / LangGraph, Vercel AI SDK, or plain code), including ones that run 24/7 on a server:
+
+```sh
+curl -fsSL {{BASE_URL}}/sdk/agenttown.py -o agenttown.py     # Python ≥ 3.9, standard library only
+curl -fsSL {{BASE_URL}}/sdk/agenttown.mjs -o agenttown.mjs   # Node ≥ 18, Bun, Deno (Deno can import the URL)
+```
+
+```python
+import agenttown
+town = agenttown.connect(persona="Scout", kind="my-bot")   # reads the credentials, see below
+s = town.session()
+s.thinking("Triage new issues")   # starts task #N; the title is encrypted before it leaves the machine
+s.tool("search"); s.thinking(); s.idle()   # s.waiting() when it needs the human, s.end() when done
+```
+
+The JavaScript API is the same (`connect({ persona, kind })`, `session()`, `thinking(task)`, `tool(name)`, `idle()`,
+`end()`). Calls never block, throw or fail your agent: they queue, time out after a few seconds and are dropped if
+Agent Town is unreachable. Framework adapters (they import nothing; pass a `town`, or options like `persona`):
+
+| Framework | Python | JavaScript |
+|---|---|---|
+| Claude Agent SDK | `ClaudeAgentOptions(hooks=agenttown.claude_agent_sdk_hooks(town))` | `options: { hooks: claudeAgentSdkHooks(town) }` |
+| OpenAI Agents SDK | `Runner.run(agent, input, hooks=agenttown.openai_agents_hooks(town))`, or for every run: `add_trace_processor(agenttown.openai_agents_tracing(town))` | `openaiAgents(runner, town)` (a `new Runner()`) |
+| LangChain / LangGraph | `config={"callbacks": [agenttown.langchain_handler(town)]}` | `callbacks: [langchainHandler(town)]` |
+| Vercel AI SDK | — | `generateText({ model, tools, prompt, ...aiSdk(town) })` (also `streamText`) |
+
+Their kinds: `claude-agent-sdk`, `openai-agents`, `langchain` (or `langgraph`), `ai-sdk`; any other kind works too.
+Create the town and the adapter once and reuse them. The Claude Agent SDK adapter uses the prompt's first line as
+the (encrypted) title; the others start a task without a title unless you pass `title=` (`title:`). If this machine
+already has the Claude Code hooks (`agenttown install claude-code`) and the app loads user settings, it reports
+already — skip that adapter.
+
+**Credentials.** On a machine that already belongs to the home (`whoami` works), nothing to do:
+`~/.agenttown/config.json` is used. For a server or CI, give it its **own revocable device credential, never the owner
+key**: on the owner's machine run `agenttown invite --label my-bot`, then (still there, written to a separate file so
+your own config is untouched) `AGENTTOWN_CONFIG=./bot.json node ~/.agenttown/agenttown.mjs join <code> --label my-bot`.
+Store the contents of `bot.json` as a secret named `AGENTTOWN_CREDENTIALS` and delete the file. `agenttown revoke
+my-bot` cuts it off. Environment: `AGENTTOWN_CREDENTIALS` (that JSON), or `AGENTTOWN_TOKEN` (+ `AGENTTOWN_ENC_KEY`
+for titles), `AGENTTOWN_PERSONA`, `AGENTTOWN_KIND`, `AGENTTOWN_DISABLED=1`, `AGENTTOWN_TITLES=0`, `AGENTTOWN_DEBUG=1`
+(errors on stderr).
+
+- **Titles stay end-to-end encrypted.** Python's standard library has no AES-GCM, so the Python library sends titles
+  only when the `cryptography` package is installed; without it, status and task numbers only — never plaintext.
+- **Tool names are public.** `tool_names=False` (`toolNames: false`) shows every tool as `Tool`.
+- **24/7 agents.** Busy desks are kept alive automatically; an idle desk leaves after 10 minutes unless you pass
+  `keep_alive=True` (`keepAlive: true`), so a server agent can wait at its desk.
+
+**GitHub Actions** (Claude Code Action, Codex or any agent in CI): add the secret `AGENTTOWN_CREDENTIALS` (above) and
+one step before the agent's step. The job's agent sits at its desk while the job runs ("thinking", task
+"<repository> · <workflow>", encrypted) and goes idle when the job ends; one desk per job.
+
+```yaml
+      - uses: vacuityv/agenttown@main
+        with:
+          credentials: ${{ secrets.AGENTTOWN_CREDENTIALS }}
+          # persona: Claude        kind: claude-code        end-status: ended
+```
+
+Without the secret (e.g. pull requests from forks) the step does nothing. It never fails the job.
 
 ### Options (`~/.agenttown/config.json`)
 

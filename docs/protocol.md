@@ -159,6 +159,30 @@ Live updates (SSE):
 
 Errors: `{ error: <code>, message }` with proper HTTP status.
 
+## Client libraries & GitHub Action (public/sdk/, action.yml)
+
+For agents built with SDKs or running on servers / in CI. `GET /sdk/agenttown.mjs` (`text/javascript`) and
+`GET /sdk/agenttown.py` (`text/plain`) serve the files with `{{BASE_URL}}` filled in (unserved copies, e.g. the
+action's, default to `https://agenttown.xyz`). Both only use `POST /personas` and `POST /report`, User-Agent
+`agenttown-sdk/<version> (js|python)` (not recorded as a CLI version).
+
+- **Credentials**, first match wins: explicit options; `AGENTTOWN_CREDENTIALS` (the JSON of a config.json, owner or
+  device form); `AGENTTOWN_OWNER_KEY`; `AGENTTOWN_TOKEN` (a bearer token, 64 hex) + optional `AGENTTOWN_ENC_KEY`
+  (b64url, 32 bytes); the config file (`AGENTTOWN_CONFIG` or `~/.agenttown/config.json`). Also `AGENTTOWN_SERVER`,
+  `AGENTTOWN_PERSONA`, `AGENTTOWN_KIND`, `AGENTTOWN_DISABLED=1`, `AGENTTOWN_TITLES=0` (and config `"titles": false`),
+  `AGENTTOWN_DEBUG=1`. No credentials → no-op. 401 (or 403 `banned`) → the library stops sending for the process.
+- **Titles**: `taskTitle()` (first line, ≤ 80 chars) then exactly "Task title encryption" above. No key (bare token)
+  or, in Python, no `cryptography` package → `task: {}` (a numbered task without a title). Never plaintext.
+- **Delivery**: per session in order, fire-and-forget (timeout 3 s); queued statuses are coalesced to the latest one
+  except task starts, which are all sent. Busy statuses are repeated every 4 min (for ≤ 2 h without a real report, so
+  a stuck "thinking" still ends); idle/waiting only with `keepAlive`. Open sessions are ended at process exit
+  (best effort; `autoEnd: false` / `auto_end=False` to opt out).
+- **Kinds** used by the adapters: `claude-agent-sdk`, `openai-agents`, `langchain` / `langgraph`, `ai-sdk`,
+  `github-actions` (the action's default), `sdk` (no kind given).
+- **Action**: main step reports `thinking` with a new task (title default `<repository> · <workflow>`) on session
+  `gha-<run id>-<attempt>-<job>` and starts a detached heartbeat (every 4 min, ≤ 6 h); the post step (`always()`)
+  kills it and reports `idle` (or `ended`). Never fails the job; without credentials it does nothing.
+
 ## Updates & announcements (server/release.ts, scripts/sign-release.mjs, scripts/admin.mjs)
 
 Trust model: the server is not trusted to push code or text to agents. Both CLI releases and announcements are signed
