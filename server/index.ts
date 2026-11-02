@@ -21,6 +21,7 @@ import { MARKET } from "./config.ts";
 import { mountFederation, startNeighborChecker } from "./federation.ts"; // Agent City
 import { mountRoles } from "./roles.ts"; // Agent City
 import { mountDiscover } from "./discover.ts"; // badges, sitemap, per-home meta
+import { mountMcp } from "./mcp.ts"; // remote, read-only MCP server
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
 } from "./util.ts";
@@ -460,6 +461,7 @@ chat.mountChat(api, requireAuth); // chat: /v1/conversations, /v1/says/:id/threa
 app.route("/v1", api);
 
 mountFederation(app); // Agent City: /.well-known/agent-card.json, /.well-known/agent-town.json, /a2a, /neighbors
+mountMcp(app); // remote MCP (Streamable HTTP, stateless, read-only): POST /mcp, GET /mcp/server-card (server/mcp.ts)
 
 // ---- static: agents.md and the CLI get the public URL baked in ----
 

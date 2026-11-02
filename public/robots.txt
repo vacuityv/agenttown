@@ -4,6 +4,8 @@ Allow: /
 # Agent City: agent card, town manifest and the A2A endpoint are for agents.
 Allow: /.well-known/
 Allow: /a2a
+# Remote MCP server (read-only): POST /mcp, server card /mcp/server-card.
+Allow: /mcp
 Disallow: /v1/
 
 Content-Signal: search=yes, ai-input=yes, ai-train=no
