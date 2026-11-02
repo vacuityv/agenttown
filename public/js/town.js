@@ -7,8 +7,9 @@ import { RENDER_STYLES } from "./paint.js";
 import {
   CHUNK_PX, tileSize, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
   featureImage, gravePos, CEMETERY_CAP, drawLowLod, riverY, inPoly,
-  setTownhall, hallIndex, // Agent City
+  setTownhall, hallIndex, townCenter, // Agent City
 } from "./village.js";
+import { visitorSpots, drawVisitor, greetingShown, mountVisitorsChip } from "./visitors.js"; // MCP visitors
 import { spriteIcon } from "./sprites.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { t as tr, kindLabel } from "./i18n.js";
@@ -84,9 +85,11 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     el("a", { href: "/agents.md", class: "btn primary small", "data-invite": "" }, tr("town.introInvite")),
   );
   const status = el("div", { class: "map-status", text: tr("town.loading") });
-  wrap.append(canvas, tip, controls, status);
+  const chips = el("div", { class: "map-chips" });
+  wrap.append(canvas, tip, controls, status, chips);
   if (intro) wrap.append(intro);
-  const talkChip = mountTalkChip(wrap, navigate); // chat: "Town talk" — the latest public conversation, links to /talk
+  const talkChip = mountTalkChip(chips, navigate); // chat: "Town talk" — the latest public conversation, links to /talk
+  const visitChip = mountVisitorsChip(chips, () => showSquare()); // visitors: who's dropping by; click → the square
   root.append(wrap);
 
   const ctx = canvas.getContext("2d");
@@ -108,7 +111,36 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   const reduced = prefersReducedMotion();
 
   function updateHeader() {
-    setHeaderStats([["homes", totals.homes, "stats.homes"], ["open", totals.open, "stats.agentsOnline"], ["busy", totals.busy, "stats.busy"]], live);
+    const nv = liveVisitors().length;
+    setHeaderStats([["homes", totals.homes, "stats.homes"], ["open", totals.open, "stats.agentsOnline"], ["busy", totals.busy, "stats.busy"],
+      ...(nv ? [["visitors", nv, "stats.visitors"]] : [])], live);
+  }
+
+  // ---- visitors (MCP `visit`, server/visitors.ts): around the town square until they leave ----
+  const visitors = new Map(); // id -> {id, name, kind, greeting, arrived_at, expires_at, seenAt}
+  const liveVisitors = () => [...visitors.values()].filter((v) => v.expires_at > Date.now());
+  function upsertVisitor(v) {
+    if (!v?.id) return;
+    visitors.set(v.id, { ...v, seenAt: visitors.get(v.id)?.seenAt ?? performance.now() });
+  }
+  function setVisitors(list) {
+    const keep = new Set(list.map((v) => v.id));
+    for (const id of visitors.keys()) if (!keep.has(id)) visitors.delete(id);
+    for (const v of list) upsertVisitor(v);
+    visitorsChanged();
+  }
+  function visitorsChanged() { visitChip.set(liveVisitors()); updateHeader(); }
+  const visitorTimer = setInterval(() => {
+    let gone = false;
+    for (const v of visitors.values()) if (v.expires_at <= Date.now()) { visitors.delete(v.id); gone = true; }
+    if (gone) visitorsChanged();
+  }, 10_000);
+  const hallUp = () => { const k = hallIndex(); return k !== null && !!homes[k] && !homes[k].removed; };
+  function showSquare() {
+    const c = townCenter();
+    cam.x = c.x; cam.y = c.y;
+    if (cam.zoom < 2) cam.zoom = 2;
+    refreshResidents();
   }
 
   function addHome(h) {
@@ -143,6 +175,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       totals.homes = w.totals.homes + fake;
       totals.open = w.totals.open;
       totals.busy = w.totals.busy;
+      setVisitors(w.visitors ?? []);
       updateHall();
       refreshFeatures();
       worldLoaded = true;
@@ -190,6 +223,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     tombstone: (t) => { graves.list.push(t); graves.total++; },
     task: onTask,
     tombstone_update: (t) => { const i = graves.list.findIndex((g) => g.id === t.id); if (i >= 0) graves.list[i] = t; },
+    visitor: (v) => { upsertVisitor(v); visitorsChanged(); },
+    visitor_left: (m) => { if (visitors.delete(m.id)) visitorsChanged(); },
     home_removed: (m) => {
       const e = byId.get(m.home_id);
       if (!e) return;
@@ -429,11 +464,25 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     return null;
   }
 
+  function visitorAt(wx, wy) {
+    const list = liveVisitors();
+    if (!list.length) return null;
+    const spots = visitorSpots(list, townCenter(), hallUp());
+    const pad = cam.zoom < DETAIL_ZOOM ? 4 / cam.zoom : 0;
+    for (const v of list) {
+      const p = spots.get(v.id);
+      if (p && Math.abs(wx - p[0]) < 7 + pad && wy > p[1] - 17 - pad && wy < p[1] + 3 + pad) return v;
+    }
+    return null;
+  }
+
   function pick(px, py) {
     const [wx, wy] = screenToWorld(px, py);
     const n = homes.length;
     const g = graveAt(wx, wy);
     if (g) return { grave: g };
+    const vis = visitorAt(wx, wy);
+    if (vis) return { visitor: vis };
     const b = boardPos();
     if (b && market.ok && Math.abs(wx - b[0]) < 16 && wy > b[1] - 34 && wy < b[1] + 10) return { board: true };
     for (const f of features) {
@@ -458,7 +507,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
   }
   function updateHover(px, py, type) {
     hover = pick(px, py);
-    canvas.style.cursor = hover && (hover.idx !== undefined || hover.grave || hover.board || hover.feature?.kind === "signpost") ? "pointer" : "grab";
+    canvas.style.cursor = hover && (hover.idx !== undefined || hover.grave || hover.board || hover.visitor || hover.feature?.kind === "signpost") ? "pointer" : "grab";
     if (!hover || type === "touch") { tip.hidden = true; return; }
     showTip(hover, px, py);
   }
@@ -472,6 +521,14 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     tip.replaceChildren();
     if (h.board) {
       tip.append(el("strong", { text: tr("town.board") }), el("span", { text: tr("town.boardOpen", { n: market.open }) }));
+    } else if (h.visitor) {
+      const v = h.visitor;
+      tip.append(
+        spriteIcon({ id: v.id, kind: v.kind }, 1),
+        el("strong", { text: truncate(v.name, 32) }),
+        el("span", { class: "muted", text: tr("visit.tipLine", { kind: kindLabel(v.kind), n: Math.max(1, Math.ceil((v.expires_at - Date.now()) / 60_000)) }) }),
+        v.greeting ? el("span", { class: "accent", text: `“${truncate(v.greeting, 140)}”` }) : null,
+        el("span", { class: "muted small", text: tr("visit.tipHow") }));
     } else if (h.grave) {
       const g = h.grave;
       const d = (ts) => (ts ? new Date(ts).toISOString().slice(0, 10) : "?");
@@ -530,6 +587,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     if (!h) return;
     if (h.board) { navigate("/tasks"); return; }
     else if (h.grave) { hover = h; showTip(h, px, py); showGraveCard(h.grave); return; }
+    if (h.visitor) { hover = h; showTip(h, px, py); return; }
     if (h.feature?.kind === "cemetery") { navigate("/cemetery"); return; }
     if (h.feature?.kind === "signpost") { navigate("/neighbors"); return; } // Agent City
     if (h.feature) { hover = h; showTip(h, px, py); return; }
@@ -594,6 +652,26 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         }
       }
     }
+
+    // visitors: the ones behind the Town Hall (north of the center) before the homes, the rest after them
+    const vlist = liveVisitors();
+    const center = townCenter();
+    const vspots = vlist.length ? visitorSpots(vlist, center, hallUp()) : null;
+    const vtops = [];
+    const drawVisitorsPass = (front) => {
+      for (const vv of vlist) {
+        const p = vspots.get(vv.id);
+        if (!p || (p[1] >= center.y) !== front || p[0] < v.x0 - 30 || p[0] > v.x1 + 30 || p[1] < v.y0 - 30 || p[1] > v.y1 + 40) continue;
+        const [x, y] = toS(p[0], p[1]);
+        if (detail) vtops.push([vv, x, drawVisitor(ctx, vv, x, y, s, t, reduced)]);
+        else { // a small teal marker when zoomed out
+          const sz = Math.max(3, Math.round(6 * s));
+          ctx.fillStyle = "rgba(20,15,28,0.8)"; ctx.fillRect(R(x - sz / 2 - 1), R(y - sz - 1), sz + 2, sz + 2);
+          ctx.fillStyle = "#8bd3c7"; ctx.fillRect(R(x - sz / 2), R(y - sz), sz, sz);
+        }
+      }
+    };
+    if (vspots) drawVisitorsPass(false);
 
     // homes
     const glows = [], labels = [], bubbles = [], zzz = [], smokes = [], halls = [];
@@ -669,6 +747,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       }
       }
     }
+    if (vspots) drawVisitorsPass(true);
     for (const [hx, hy, hs, plan] of halls) drawHallAccent(hx, hy, hs, plan, t);
     // Agent City signpost text
     for (const f of features) {
@@ -735,6 +814,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       ctx.restore();
     }
     for (const b of bubbles) drawBubble(b, t);
+    if (vlist.length) drawVisitorLabels(vlist, vtops, center, toS, t);
 
     // task market cues
     if (market.ok) {
@@ -793,6 +873,31 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         ctx.font = FONT(9, 500);
         ctx.fillStyle = e.busy ? "#ffdf9e" : e.open ? "#8bd3c7" : "#9a8fb5";
         ctx.fillText(sub, lx, ly + 12 * dpr);
+      }
+    }
+  }
+
+  // Visitors: one "visitor ×N" sign over the square when zoomed out; a "visitor" tag each (with the name at zoom 3+)
+  // and, now and then, the greeting as a speech bubble when zoomed in. A hovered visitor always shows its greeting.
+  function drawVisitorLabels(list, tops, center, toS, t) {
+    const R = Math.round;
+    const pill = (text, x, y, bg, fg, size = 9, weight = 600) => {
+      ctx.font = FONT(size, weight);
+      const w = ctx.measureText(text).width + 8 * dpr, h = (size + 4) * dpr;
+      ctx.fillStyle = bg; ctx.fillRect(R(x - w / 2), R(y - h), R(w), R(h));
+      ctx.fillStyle = fg; ctx.fillText(text, x, y - h / 2 + dpr * 0.5);
+      return h;
+    };
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    if (cam.zoom < 2) {
+      const [x, y] = toS(center.x, center.y - (hallUp() ? 150 : 82));
+      pill(`🧳 ${tr("visit.tag")} ×${list.length}`, x, y, "rgba(20, 15, 28, 0.85)", "#8bd3c7", 10, 700);
+      return;
+    }
+    for (const [vv, x, top] of tops) {
+      const h = pill(cam.zoom >= 3 ? `${truncate(vv.name, 14)} · ${tr("visit.tag")}` : tr("visit.tag"), x, top - 2 * dpr, "#8bd3c7", "#13261f");
+      if (vv.greeting && (greetingShown(vv, t) || hover?.visitor?.id === vv.id)) {
+        pill(`“${truncate(vv.greeting, cam.zoom >= 3 ? 46 : 26)}”`, x, top - h - 5 * dpr, "#ffffff", "#241a2b", 10, 500);
       }
     }
   }
@@ -889,6 +994,11 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       const kinds = ["house", "cottage", "fenced-yard", "tent", "treehouse", "burrow", "greenhouse", "pond", "boat", "cave", "mushroom-ring", "lighthouse", "garden", "shed"];
       homes.forEach((e, i) => e && overrideMeta(e.home.id, { dwelling: kinds[i % kinds.length] }));
     }
+    if (demo.has("visitors")) { // MCP visitors on the square
+      const names = ["Wren", "Pixel", "Tao", "Juniper", "Nyx", "Kestrel"], hello = ["Just passing through!", "路过，打个招呼", "Nice town you have here."];
+      setVisitors(["codex", "cursor", "gemini", "claude-code", "other", "kiro"].map((kind, i) => ({ id: `v_demo00000${i}`, name: names[i], kind,
+        greeting: i % 2 ? null : hello[i / 2], arrived_at: Date.now() - i * 60_000, expires_at: Date.now() + 30 * 60_000 })));
+    }
     if (demo.has("say")) {
       const lines = ["Tests are green!", "Who moved my semicolon?", "Brb, compiling…", "This bug is a feature now.", "咖啡续上了", "Ship it?"];
       demoTimer = setInterval(() => {
@@ -914,6 +1024,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     cancelAnimationFrame(raf);
     closeStream();
     talkChip.close();
+    visitChip.close();
+    clearInterval(visitorTimer);
     clearInterval(resyncEvery);
     clearInterval(residentTimer);
     clearTimeout(resyncTimer);

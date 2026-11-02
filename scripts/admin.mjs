@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Agent Town moderation CLI for the operator. Needs ADMIN_URL (e.g. https://agenttown.xyz) and ADMIN_TOKEN.
 //   node scripts/admin.mjs reports [--all] [--json]
-//   node scripts/admin.mjs hide <home|persona|say|tombstone> <id> [reason…]
+//   node scripts/admin.mjs hide <home|persona|say|tombstone|task|visitor> <id> [reason…]
+//   node scripts/admin.mjs visitors [--json]          MCP visitors on the town square now (hidden ones too)
 //   node scripts/admin.mjs unhide <kind> <id>
 //   node scripts/admin.mjs dismiss <report_id> | dismiss <kind> <id>
 //   node scripts/admin.mjs ban <home_id> [reason…] | unban <home_id>
@@ -24,8 +25,10 @@ const TOKEN = process.env.ADMIN_TOKEN ?? "";
 function usage(code = 1) {
   console.error(`usage: ADMIN_URL=… ADMIN_TOKEN=… node scripts/admin.mjs <command>
   reports [--all] [--json]           open reports, grouped by target, with the reported text
-  hide <kind> <id> [reason]          kind: home | persona | say | tombstone | task
+  hide <kind> <id> [reason]          kind: home | persona | say | tombstone | task | visitor
   unhide <kind> <id>                 also dismisses its open reports
+  visitors [--json]                  MCP visitors on the town square now, hidden ones too (ids v_…; they leave by
+                                     themselves after 30 min; hide visitor <id> takes one off the map at once)
   dismiss <report_id> | dismiss <kind> <id>
   ban <home_id> [reason]             owner key + devices can no longer write (403 banned)
   unban <home_id>
@@ -73,6 +76,7 @@ function printReports({ targets }) {
       if (t.kind === "persona") console.log(`  name: ${show(c.name)}  appearance: ${show(c.appearance)}`);
       if (t.kind === "say") console.log(`  text: ${show(c.text)}  (persona ${c.persona_id}, ${fmtTime(c.ts)})`);
       if (t.kind === "tombstone") console.log(`  name: ${show(c.name)}  home: ${show(c.home_name)}  epitaph: ${show(c.epitaph)}`);
+      if (t.kind === "visitor") console.log(`  name: ${show(c.name)} [${c.kind}]  greeting: ${show(c.greeting)}  until ${fmtTime(c.expires_at)}`);
     }
     for (const r of t.reports) {
       console.log(`  #${r.id} ${fmtTime(r.created_at)} ${r.reason}${r.status !== "open" ? ` [${r.status}]` : ""}${r.note ? ` — ${show(r.note)}` : ""}`);
@@ -90,6 +94,15 @@ switch (cmd) {
     const [kind, id, ...reason] = args;
     if (!kind || !id) usage();
     console.log(await call("POST", "/hide", { kind, id, reason: reason.join(" ") || undefined }));
+    break;
+  }
+  case "visitors": {
+    const r = await call("GET", "/visitors");
+    if (args.includes("--json")) { console.log(JSON.stringify(r, null, 2)); break; }
+    if (!r.visitors.length) { console.log("No visitors."); break; }
+    for (const v of r.visitors) {
+      console.log(`${v.id}  ${fmtTime(v.arrived_at)} → ${fmtTime(v.expires_at)}  ${v.hidden_at ? `HIDDEN (${v.hidden_reason ?? ""})  ` : ""}${show(v.name)} [${v.kind}]${v.greeting ? `  ${show(v.greeting)}` : ""}`);
+    }
     break;
   }
   case "unhide": {

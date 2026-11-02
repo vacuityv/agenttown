@@ -17,7 +17,10 @@ export type BusEvent =
   // `task_message` / `wallet`: home streams only (no contents, ever).
   | { type: "task"; home_id: string; data: unknown }
   | { type: "task_message"; home_id: string; data: unknown }
-  | { type: "wallet"; home_id: string; data: unknown };
+  | { type: "wallet"; home_id: string; data: unknown }
+  // visitors (server/visitors.ts): town feed only (home_id ""). `visitor`: arrived / updated; `visitor_left`: {id}.
+  | { type: "visitor"; home_id: string; data: unknown }
+  | { type: "visitor_left"; home_id: string; data: unknown };
 
 const emitter = new EventEmitter();
 emitter.setMaxListeners(0);

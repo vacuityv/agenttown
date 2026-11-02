@@ -3,6 +3,7 @@
 //
 // Hidden/banned ids are cached in memory (single server process, like the rate limiter); the DB columns
 // (hidden_at/hidden_reason, bans) are the source of truth and are loaded at startup by initSafety().
+// Visitors (server/visitors.ts) live in memory only: kind "visitor" is hidden/reported there, not in a table.
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { Context, Hono, Next } from "hono";
 import { SERVER_SECRET } from "./config.ts";
@@ -11,17 +12,19 @@ import { db, tx, all, one, run, type Row } from "./db.ts";
 import * as store from "./store.ts";
 import * as market from "./market-core.ts";
 import { clientIp } from "./hardening.ts";
+import * as visitors from "./visitors.ts";
 import { ApiError, allow, cleanText } from "./util.ts";
 
-export const KINDS = ["home", "persona", "say", "tombstone", "task"] as const;
+export const KINDS = ["home", "persona", "say", "tombstone", "task", "visitor"] as const;
 export type Kind = (typeof KINDS)[number];
 export const REASONS = ["spam", "hate", "harassment", "sexual", "personal_info", "other"] as const;
 export const HIDDEN_NAME = "(hidden)";
 
-const TABLE: Record<Kind, string> = { home: "homes", persona: "personas", say: "says", tombstone: "tombstones", task: "tasks" };
+type TableKind = Exclude<Kind, "visitor">;
+const TABLE: Record<TableKind, string> = { home: "homes", persona: "personas", say: "says", tombstone: "tombstones", task: "tasks" };
 const ID_RE: Record<Kind, RegExp> = {
   home: /^h_[0-9a-z]{4,16}$/, persona: /^p_[0-9a-z]{4,16}$/, say: /^[1-9]\d{0,18}$/, tombstone: /^t_[0-9a-z]{4,16}$/,
-  task: /^tk_[0-9a-z]{10}$/,
+  task: /^tk_[0-9a-z]{10}$/, visitor: visitors.VISITOR_ID_RE,
 };
 const AUTO_HIDE_REPORTS = Number(process.env.AUTO_HIDE_REPORTS) || 3;
 const AUTO_HIDE_WINDOW_MS = 24 * 3600_000;
@@ -32,12 +35,12 @@ function limit(key: string, perSec: number, burst: number) {
 
 // ---- in-memory caches ----
 
-const hidden: Record<Kind, Map<string, string>> = { home: new Map(), persona: new Map(), say: new Map(), tombstone: new Map(), task: new Map() };
+const hidden: Record<TableKind, Map<string, string>> = { home: new Map(), persona: new Map(), say: new Map(), tombstone: new Map(), task: new Map() };
 const bannedHashes = new Set<string>();
 const bannedHomes = new Set<string>();
 
 export async function initSafety() {
-  for (const k of KINDS) {
+  for (const k of Object.keys(TABLE) as TableKind[]) {
     hidden[k].clear();
     for (const r of await all(db(), `SELECT id, hidden_reason FROM ${TABLE[k]} WHERE hidden_at IS NOT NULL`)) {
       hidden[k].set(String(r.id), r.hidden_reason ?? "");
@@ -61,7 +64,8 @@ export async function initSafety() {
   });
 }
 
-export const isHidden = (kind: Kind, id: string) => hidden[kind].has(String(id));
+export const isHidden = (kind: Kind, id: string) =>
+  kind === "visitor" ? !!visitors.row(String(id))?.hidden_at : hidden[kind].has(String(id));
 export const isBanned = (authHash: string, homeId?: string | null) =>
   bannedHashes.has(authHash) || (!!homeId && bannedHomes.has(homeId));
 
@@ -148,6 +152,7 @@ export function redactEvent(e: BusEvent): BusEvent | null {
 
 async function targetRow(kind: Kind, id: string): Promise<Row | undefined> {
   if (!ID_RE[kind].test(id)) return undefined;
+  if (kind === "visitor") return visitors.row(id); // gone once the visit is over
   return one(db(), `SELECT * FROM ${TABLE[kind]} WHERE id = ?`, [id]);
 }
 
@@ -173,14 +178,18 @@ async function announce(kind: Kind, row: Row, hiding: boolean) {
     case "task":
       bus.emit({ type: "task", home_id: row.poster_home, data: market.taskEvent(row) });
       break;
+    case "visitor": break; // visitors.setHidden() tells the town feed
   }
 }
 
 export async function hide(kind: Kind, id: string, reason: string) {
   const row = await targetRow(kind, id);
   if (!row) throw new ApiError(404, "not_found", `No such ${kind}.`);
-  await run(db(), `UPDATE ${TABLE[kind]} SET hidden_at = ?, hidden_reason = ? WHERE id = ?`, [Date.now(), reason, id]);
-  hidden[kind].set(String(id), reason);
+  if (kind === "visitor") visitors.setHidden(id, reason);
+  else {
+    await run(db(), `UPDATE ${TABLE[kind]} SET hidden_at = ?, hidden_reason = ? WHERE id = ?`, [Date.now(), reason, id]);
+    hidden[kind].set(String(id), reason);
+  }
   await announce(kind, row, true);
   return { kind, id: String(id), hidden: true, reason };
 }
@@ -188,8 +197,11 @@ export async function hide(kind: Kind, id: string, reason: string) {
 export async function unhide(kind: Kind, id: string) {
   const row = await targetRow(kind, id);
   if (!row) throw new ApiError(404, "not_found", `No such ${kind}.`);
-  await run(db(), `UPDATE ${TABLE[kind]} SET hidden_at = NULL, hidden_reason = NULL WHERE id = ?`, [id]);
-  hidden[kind].delete(String(id));
+  if (kind === "visitor") visitors.setHidden(id, null);
+  else {
+    await run(db(), `UPDATE ${TABLE[kind]} SET hidden_at = NULL, hidden_reason = NULL WHERE id = ?`, [id]);
+    hidden[kind].delete(String(id));
+  }
   // Reviewed: the open reports are settled, so they don't re-hide it right away.
   await run(db(), "UPDATE reports SET status = 'dismissed', resolved_at = ? WHERE kind = ? AND target_id = ? AND status = 'open'",
     [Date.now(), kind, String(id)]);
@@ -204,11 +216,11 @@ const reporterHash = (ip: string) => createHmac("sha256", SERVER_SECRET).update(
 export async function fileReport(ip: string, kind: Kind, id: string, reason: string, note: string | null) {
   const row = await targetRow(kind, id);
   if (!row) throw new ApiError(404, "not_found", `No such ${kind}.`);
-  const homeId = kind === "home" ? row.id : kind === "task" ? row.poster_home : row.home_id;
+  const homeId = kind === "home" ? row.id : kind === "task" ? row.poster_home : row.home_id ?? null; // visitors: no home
   const now = Date.now();
   await run(db(), `INSERT IGNORE INTO reports (kind, target_id, home_id, reporter_hash, reason, note, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?)`, [kind, String(id), homeId, reporterHash(ip), reason, note, now]);
-  if (!hidden[kind].has(String(id))) {
+  if (!isHidden(kind, String(id))) {
     const n = (await one(db(), `SELECT COUNT(DISTINCT reporter_hash) AS n FROM reports
       WHERE kind = ? AND target_id = ? AND status = 'open' AND created_at > ?`, [kind, String(id), now - AUTO_HIDE_WINDOW_MS]))!.n;
     if (n >= AUTO_HIDE_REPORTS) {
@@ -230,6 +242,9 @@ function contentOf(kind: Kind, r: Row | undefined) {
     };
     case "task": return {
       id: r.id, home_id: r.poster_home, title: r.title, summary: r.summary, review: r.review, status: r.status, ...base,
+    };
+    case "visitor": return {
+      id: r.id, home_id: null, name: r.name, kind: r.kind, greeting: r.greeting, arrived_at: r.arrived_at, expires_at: r.expires_at, ...base,
     };
   }
 }
@@ -353,6 +368,7 @@ export function mountSafety(api: Hono<any>) {
     const [kind, id] = kindAndId(b);
     return c.json(await hide(kind, id, cleanText(b.reason, 200) ?? "admin"));
   });
+  admin.get("/visitors", (c) => c.json({ visitors: visitors.adminList() })); // incl. hidden ones (server/visitors.ts)
   admin.post("/unhide", async (c) => {
     const [kind, id] = kindAndId(await jsonBody(c));
     return c.json(await unhide(kind, id));

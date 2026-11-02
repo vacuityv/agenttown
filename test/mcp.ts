@@ -111,11 +111,12 @@ try {
   assert.equal((await legacy("ping", undefined, "")).status, 200, "no header = 2025-03-26");
   const ltools = await legacy("tools/list", {}, "2025-11-25");
   const names = ltools.body.result.tools.map((t: any) => t.name);
-  assert.deepEqual(names, ["town_status", "list_homes", "get_home", "recent_talk", "how_to_join"]);
+  assert.deepEqual(names, ["town_status", "list_homes", "get_home", "recent_talk", "visit", "how_to_join"]);
   assert.equal(ltools.body.result.resultType, undefined, "legacy results have no resultType");
   for (const t of ltools.body.result.tools) {
     assert.ok(t.title && t.description && t.inputSchema?.type === "object", `${t.name}: title, description, inputSchema`);
-    assert.equal(t.annotations.readOnlyHint, true, `${t.name} is read-only`);
+    // `visit` puts the caller on the map for a while (in memory; test/visitors.ts); everything else only reads.
+    assert.equal(t.annotations.readOnlyHint, t.name !== "visit", `${t.name} is ${t.name === "visit" ? "not " : ""}read-only`);
     assert.equal(t.annotations.destructiveHint, false);
   }
   const lcall = await legacy("tools/call", { name: "town_status", arguments: {} });

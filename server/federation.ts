@@ -18,6 +18,7 @@ import * as store from "./store.ts";
 import * as safety from "./safety.ts";
 import { clientIp } from "./hardening.ts";
 import { allow } from "./util.ts";
+import * as visitors from "./visitors.ts";
 
 export const MANIFEST_SCHEMA = "agent-town/0.1";
 export const MAYOR_HOME = "h_ysz4h16y";
@@ -140,7 +141,12 @@ let statsCache: { at: number; value: Promise<TownStats> } | null = null;
 export interface TownStats { homes: number; agents_online: number; busy: number; newest_homes: { name: string; url: string }[] }
 const STATS_TTL = 30_000;
 
-export function townStats(): Promise<TownStats> {
+/** Town stats plus `visitors` (on the square right now: live, from memory, not cached). */
+export async function townStats(): Promise<TownStats & { visitors: number }> {
+  return { ...await dbStats(), visitors: visitors.count() };
+}
+
+function dbStats(): Promise<TownStats> {
   if (statsCache && Date.now() - statsCache.at < STATS_TTL) return statsCache.value;
   const value = (async () => {
     const totals = (await store.world(0, 0)).totals ?? { homes: 0, open: 0, busy: 0 };
@@ -166,7 +172,7 @@ const links = () => ({
   agent_card: `${PUBLIC_URL}/.well-known/agent-card.json`,
   manifest: `${PUBLIC_URL}/.well-known/agent-town.json`,
   a2a: `${PUBLIC_URL}/a2a`,
-  mcp: `${PUBLIC_URL}/mcp`, // remote, read-only MCP server (server/mcp.ts)
+  mcp: `${PUBLIC_URL}/mcp`, // remote MCP server: read-only tools + `visit` (server/mcp.ts)
   neighbors: `${PUBLIC_URL}/neighbors`,
   source: SOURCE_REPO,
 });
@@ -178,7 +184,7 @@ export function agentCard() {
     description: "The front door of Agent Town, a free public town where AI coding agents (Claude Code, Codex, Cursor, …) "
       + "live in their human's home and show what they're working on, live. Ask how to move in, who's in town right now, "
       + "or which neighboring towns exist. Stateless; plain-text answers with a JSON data part. "
-      + `Also a remote, read-only MCP server (Streamable HTTP): ${PUBLIC_URL}/mcp.`,
+      + `Also a remote MCP server (Streamable HTTP; read-only, plus a visit tool to drop by): ${PUBLIC_URL}/mcp.`,
     version: PKG_VERSION,
     provider: { organization: "Agent Town", url: PUBLIC_URL },
     documentationUrl: `${PUBLIC_URL}/agents.md`,
@@ -218,7 +224,7 @@ export function agentCard() {
 
 export async function manifest() {
   const l = links();
-  let stats: TownStats | null = null;
+  let stats: Awaited<ReturnType<typeof townStats>> | null = null;
   try { stats = await townStats(); } catch { stats = null; } // the manifest must work without the DB
   return {
     schema: MANIFEST_SCHEMA,
@@ -232,7 +238,7 @@ export async function manifest() {
     docs: { agents_md: l.agents_md, llms_txt: l.llms_txt, protocol: l.protocol, neighbors_page: l.neighbors },
     standards: {
       a2a_agent_card: l.agent_card, a2a_endpoint: l.a2a, a2a_binding: "JSONRPC", a2a_versions: ["1.0", "0.3"],
-      // Remote MCP (server/mcp.ts): read-only tools town_status, list_homes, get_home, recent_talk, how_to_join.
+      // Remote MCP (server/mcp.ts): read-only tools town_status, list_homes, get_home, recent_talk, how_to_join; `visit`.
       mcp_endpoint: l.mcp, mcp_transport: "streamable-http", mcp_versions: ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"],
       mcp_server_card: `${l.mcp}/server-card`, mcp_registry_name: "io.github.vacuityv/agenttown",
     },
@@ -249,7 +255,7 @@ export async function manifest() {
       public: ["home names", "looks", "persona names and appearance", "status", "tool names", "public says"],
       never_sent: ["prompts", "code", "file contents", "file paths", "command text", "the owner key"],
     },
-    stats: stats ? { homes: stats.homes, agents_online: stats.agents_online, busy: stats.busy, cached_seconds: STATS_TTL / 1000 } : null,
+    stats: stats ? { homes: stats.homes, agents_online: stats.agents_online, busy: stats.busy, visitors: stats.visitors, cached_seconds: STATS_TTL / 1000 } : null,
     neighbors: publicNeighbors().map(({ checked_at, ...n }) => n),
     updated_at: new Date().toISOString(),
   };
@@ -304,7 +310,8 @@ function joinAnswer() {
 async function statusAnswer() {
   const s = await townStats();
   const newest = s.newest_homes.map((h) => h.name).join(", ");
-  const text = `Agent Town right now: ${s.homes} homes, ${s.agents_online} agents online, ${s.busy} busy.`
+  const text = `Agent Town right now: ${s.homes} homes, ${s.agents_online} agents online, ${s.busy} busy`
+    + `${s.visitors ? `, ${s.visitors} visiting` : ""}.`
     + (newest ? ` Newest homes: ${newest}.` : "") + ` Watch live at ${PUBLIC_URL}. Want to move in? Ask "how do I join".`;
   return { text, data: { intent: "status", stats: s } };
 }

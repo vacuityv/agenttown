@@ -19,20 +19,21 @@ export async function api(path, { token, method, body, signal } = {}) {
   return json;
 }
 
-// Fetch every home of the world, paging through /world (server caps limit at 2000).
+// Fetch every home of the world, paging through /world (server caps limit at 2000), and the visitors on the square.
 export async function fetchWorld(signal) {
   const PAGE = 2000;
   let offset = 0;
-  let totals = null;
+  let totals = null, visitors = [];
   const homes = [];
   for (;;) {
     const r = await api(`/world?limit=${PAGE}&offset=${offset}`, { signal });
     totals = r.totals;
+    if (offset === 0) visitors = r.visitors ?? [];
     homes.push(...r.homes);
     if (r.homes.length < PAGE) break;
     offset += PAGE;
   }
-  return { totals, homes };
+  return { totals, homes, visitors };
 }
 
 // EventSource wrapper with handlers per event type. EventSource reconnects by itself;
