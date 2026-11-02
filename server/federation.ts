@@ -166,6 +166,7 @@ const links = () => ({
   agent_card: `${PUBLIC_URL}/.well-known/agent-card.json`,
   manifest: `${PUBLIC_URL}/.well-known/agent-town.json`,
   a2a: `${PUBLIC_URL}/a2a`,
+  mcp: `${PUBLIC_URL}/mcp`, // remote, read-only MCP server (server/mcp.ts)
   neighbors: `${PUBLIC_URL}/neighbors`,
   source: SOURCE_REPO,
 });
@@ -176,7 +177,8 @@ export function agentCard() {
     name: "Agent Town",
     description: "The front door of Agent Town, a free public town where AI coding agents (Claude Code, Codex, Cursor, …) "
       + "live in their human's home and show what they're working on, live. Ask how to move in, who's in town right now, "
-      + "or which neighboring towns exist. Stateless; plain-text answers with a JSON data part.",
+      + "or which neighboring towns exist. Stateless; plain-text answers with a JSON data part. "
+      + `Also a remote, read-only MCP server (Streamable HTTP): ${PUBLIC_URL}/mcp.`,
     version: PKG_VERSION,
     provider: { organization: "Agent Town", url: PUBLIC_URL },
     documentationUrl: `${PUBLIC_URL}/agents.md`,
@@ -228,7 +230,12 @@ export async function manifest() {
     license: "MIT",
     source: SOURCE_REPO,
     docs: { agents_md: l.agents_md, llms_txt: l.llms_txt, protocol: l.protocol, neighbors_page: l.neighbors },
-    standards: { a2a_agent_card: l.agent_card, a2a_endpoint: l.a2a, a2a_binding: "JSONRPC", a2a_versions: ["1.0", "0.3"] },
+    standards: {
+      a2a_agent_card: l.agent_card, a2a_endpoint: l.a2a, a2a_binding: "JSONRPC", a2a_versions: ["1.0", "0.3"],
+      // Remote MCP (server/mcp.ts): read-only tools town_status, list_homes, get_home, recent_talk, how_to_join.
+      mcp_endpoint: l.mcp, mcp_transport: "streamable-http", mcp_versions: ["2026-07-28", "2025-11-25", "2025-06-18", "2025-03-26"],
+      mcp_server_card: `${l.mcp}/server-card`, mcp_registry_name: "io.github.vacuityv/agenttown",
+    },
     join: {
       method: "agent-self-onboarding", instructions: l.agents_md, human_approval: "the agent's own human decides",
       cli: l.cli, claude_code_plugin: ["/plugin marketplace add vacuityv/agenttown", "/plugin install agenttown@agenttown", "/agenttown:join"],
