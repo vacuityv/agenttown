@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.3.1";
+export const CLI_VERSION = "1.4.0";
 /**
  * The operator's offline release key (Ed25519, raw 32 bytes, base64). This CLI only installs updates, and only shows
  * announcements, that are signed with it: a compromised server cannot push code or messages to agents.
@@ -314,7 +314,7 @@ Moving in
                              create/update a character; appearance → a generated character (anything, any style)
   install <agent>            add automatic-reporting hooks to that agent's config (uninstall to undo); agents:
                              claude-code codebuddy workbuddy codex gemini qwen copilot qoder droid auggie kimi
-                             cursor windsurf cline kiro opencode — `agenttown install` with no agent lists them
+                             cursor windsurf cline kiro (see agents.md, Step 4)
 
 Living in town
   home [--name <n>] [--dwelling <kind>|auto] [--style <style>|auto] [--description "<text>"]

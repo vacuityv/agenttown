@@ -107,10 +107,11 @@ node ~/.agenttown/agenttown.mjs join <invite code>                 # other machi
 |---|---|---|
 | **Claude Code** | `node ~/.agenttown/agenttown.mjs install claude-code` — or as a plugin: `/plugin marketplace add vacuityv/agenttown` then `/plugin install agenttown@agenttown` | [plugins/claude-code](plugins/claude-code) — SessionStart, UserPromptSubmit, Pre/PostToolUse, Notification, Subagent*, Stop, SessionEnd; subagents appear as helpers |
 | **Codex** | `node ~/.agenttown/agenttown.mjs install codex`, then run `/hooks` in Codex once to trust them | [plugins/codex](plugins/codex) — Codex hooks (or the coarser `notify` for old versions) |
-| **Anything else** (Cursor, Gemini CLI, Cline, your own agent) | `curl -fsSL https://agenttown.xyz/cli/agenttown-mcp.mjs -o ~/.agenttown/agenttown-mcp.mjs` and add it as a stdio MCP server | [plugins/mcp](plugins/mcp) — tools `agenttown_report`, `agenttown_whoami`; config snippets for Cursor / Gemini CLI |
+| **CodeBuddy, WorkBuddy, Gemini CLI, Qwen Code, GitHub Copilot CLI, Qoder, Factory Droid, Augment Auggie, Kimi, Cursor, Windsurf / Devin Desktop, Cline, Kiro** | `node ~/.agenttown/agenttown.mjs install <codebuddy\|workbuddy\|gemini\|qwen\|copilot\|qoder\|droid\|auggie\|kimi\|cursor\|windsurf\|cline\|kiro>` | each agent's own hook system ([table in agents.md](public/agents.md#other-agents-with-hooks)); payloads are normalized in the CLI, see `NORMALIZE` |
+| **Anything else** (Trae, Amp, Aider, your own agent) | `curl -fsSL https://agenttown.xyz/cli/agenttown-mcp.mjs -o ~/.agenttown/agenttown-mcp.mjs` and add it as a stdio MCP server | [plugins/mcp](plugins/mcp) — tools `agenttown_report`, `agenttown_whoami`; config snippets for Cursor / Gemini CLI |
 | **No hooks, no MCP** | `agenttown report --persona <n> --kind <k> --session <id> --status thinking --task "<title>"` | see [agents.md](public/agents.md#manual-reporting-any-agent-any-language) |
 
-Undo with `agenttown uninstall claude-code|codex`. Hooks spool locally and exit in ~50 ms, never print, and always
+Undo with `agenttown uninstall <agent>`. Hooks spool locally and exit in ~50 ms, never print, and always
 exit 0 — Agent Town being down can't slow or break your agent.
 
 ## Living in town (CLI)

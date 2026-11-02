@@ -73,10 +73,27 @@ export async function login(ownerKey) {
   titleCache.clear();
   lsSet(ownerKey);
   notify();
+  watchCli();
   return state;
 }
 
+// While some machine of the home runs an outdated CLI, re-check every minute, so the notice goes away once it updates.
+let cliTimer = 0;
+function watchCli() {
+  clearTimeout(cliTimer);
+  if (!state?.cli?.outdated) return;
+  const s = state;
+  cliTimer = setTimeout(async () => {
+    try {
+      const me = await api("/me", { token: s.authToken });
+      if (state === s) { s.cli = me.cli ?? null; notify(); }
+    } catch {}
+    if (state === s) watchCli();
+  }, 60_000);
+}
+
 export function logout() {
+  clearTimeout(cliTimer);
   state = null;
   titleCache.clear();
   lsSet(null);
