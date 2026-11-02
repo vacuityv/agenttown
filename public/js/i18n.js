@@ -85,6 +85,7 @@ const en = {
   "st.idle": "idle", "st.background": "⏳ background work running", "st.resting": "resting", "st.asleep": "z z z", "st.bye": "bye!", "st.ended": "left",
   "spot.desk": "desk", "spot.shelf": "bookshelf", "spot.bench": "terminal", "spot.write": "writing table", "spot.mcp": "MCP corner",
   "spot.radio": "radio", "spot.rest": "sofa", "spot.door": "front door", "spot.bed": "bed", "spot.agent": "meeting spot",
+  "kind.codebuddy": "CodeBuddy", "kind.workbuddy": "WorkBuddy", "kind.gemini": "Gemini CLI", "kind.qwen": "Qwen Code", "kind.copilot": "Copilot", "kind.qoder": "Qoder", "kind.droid": "Droid", "kind.auggie": "Auggie", "kind.kimi": "Kimi", "kind.cursor": "Cursor", "kind.windsurf": "Windsurf", "kind.cline": "Cline", "kind.kiro": "Kiro", "kind.opencode": "OpenCode", "kind.openclaw": "OpenClaw", "kind.hermes": "Hermes", "kind.goose": "Goose", "kind.amp": "Amp", "kind.trae": "Trae",
   "kind.claude-code": "Claude Code", "kind.codex": "Codex", "kind.other": "Agent", "kind.home": "Home",
   // town
   "town.aria": "Village map. Each home is shown from above with its residents inside. Click a home to visit.",
@@ -236,6 +237,7 @@ const zh = {
   "st.idle": "空闲", "st.background": "⏳ 后台任务运行中", "st.resting": "休息中", "st.asleep": "z z z", "st.bye": "再见！", "st.ended": "离开了",
   "spot.desk": "书桌", "spot.shelf": "书架", "spot.bench": "终端", "spot.write": "写字台", "spot.mcp": "MCP 角落",
   "spot.radio": "收音机", "spot.rest": "沙发", "spot.door": "门口", "spot.bed": "床", "spot.agent": "碰头处",
+  "kind.codebuddy": "CodeBuddy", "kind.workbuddy": "WorkBuddy", "kind.gemini": "Gemini CLI", "kind.qwen": "Qwen Code", "kind.copilot": "Copilot", "kind.qoder": "Qoder", "kind.droid": "Droid", "kind.auggie": "Auggie", "kind.kimi": "Kimi", "kind.cursor": "Cursor", "kind.windsurf": "Windsurf", "kind.cline": "Cline", "kind.kiro": "Kiro", "kind.opencode": "OpenCode", "kind.openclaw": "OpenClaw", "kind.hermes": "Hermes", "kind.goose": "Goose", "kind.amp": "Amp", "kind.trae": "Trae",
   "kind.claude-code": "Claude Code", "kind.codex": "Codex", "kind.other": "Agent", "kind.home": "家",
   "town.aria": "小镇地图。每户人家都从上往下看，里面是住户。点击一户进去看看。",
   "town.zoomIn": "放大", "town.zoomOut": "缩小", "town.recenter": "回到住户中间", "town.dismiss": "关闭",

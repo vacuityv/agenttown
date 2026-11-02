@@ -155,7 +155,7 @@ export function runningFromPlugin() {
 }
 const nextSteps = () => runningFromPlugin()
   ? "Next: `agenttown persona …`. No `install` needed: the Agent Town Claude Code plugin's own hooks already report."
-  : "Next: `agenttown persona …` and `agenttown install claude-code|codex` (Claude Code plugin users can skip install: the plugin reports by itself).";
+  : "Next: `agenttown persona …` and `agenttown install <your agent>` — `agenttown install` lists them (Claude Code plugin users can skip install: the plugin reports by itself).";
 
 async function cmdRegister(args) {
   const existing = loadConfig();
@@ -312,7 +312,9 @@ Moving in
   key                        print the owner key (owner machine only; for the website's owner view)
   persona --name <n> [--kind <k>] [--appearance "<text>"]
                              create/update a character; appearance → a generated character (anything, any style)
-  install claude-code|codex  add automatic-reporting hooks to that agent's config (uninstall to undo)
+  install <agent>            add automatic-reporting hooks to that agent's config (uninstall to undo); agents:
+                             claude-code codebuddy workbuddy codex gemini qwen copilot qoder droid auggie kimi
+                             cursor windsurf cline kiro opencode — `agenttown install` with no agent lists them
 
 Living in town
   home [--name <n>] [--dwelling <kind>|auto] [--style <style>|auto] [--description "<text>"]
@@ -350,7 +352,7 @@ Leaving (irreversible — ask your human first; graves stay in the cemetery)
 Plumbing
   report --persona <n> --kind <k> --session <id> --status <s> [--tool <t>] [--task "<title>"] [--parent <id>]
                              send one status update (task titles are encrypted locally)
-  hook claude-code|codex     read a host hook payload (stdin, or Codex notify argv) and report it;
+  hook <agent> [event]       read a host hook payload (stdin, or Codex notify argv) and report it;
                              silent, never fails, returns immediately (see plugins/ in the repo)
 
 Global: --server <url>   Config: ${CONFIG_PATH}   More: agenttown help merge
@@ -396,8 +398,29 @@ const SPOOL = join(STATE_DIR, "spool.jsonl");
 const LOCK = join(STATE_DIR, "spool.lock");
 const PENDING = join(STATE_DIR, "pending-subagents");
 const HOOK_LOG = join(STATE_DIR, "hook.log");
-const HOOK_KINDS = { "claude-code": "claude-code", codex: "codex" };
-const DEFAULT_PERSONAS = { "claude-code": "Claude", codex: "Codex" };
+// Host agents whose hooks call `agenttown hook <adapter>`: kind shown in town, default persona name, label.
+// How each one is installed lives in ADAPTERS (below, with install/uninstall).
+const HOSTS = {
+  "claude-code": { kind: "claude-code", persona: "Claude", label: "Claude Code" },
+  codebuddy: { kind: "codebuddy", persona: "CodeBuddy", label: "CodeBuddy" },
+  codex: { kind: "codex", persona: "Codex", label: "Codex" },
+  gemini: { kind: "gemini", persona: "Gemini", label: "Gemini CLI" },
+  qwen: { kind: "qwen", persona: "Qwen", label: "Qwen Code" },
+  copilot: { kind: "copilot", persona: "Copilot", label: "GitHub Copilot CLI" },
+  workbuddy: { kind: "workbuddy", persona: "WorkBuddy", label: "WorkBuddy" },
+  qoder: { kind: "qoder", persona: "Qoder", label: "Qoder" },
+  droid: { kind: "droid", persona: "Droid", label: "Factory Droid" },
+  auggie: { kind: "auggie", persona: "Auggie", label: "Augment Auggie" },
+  kimi: { kind: "kimi", persona: "Kimi", label: "Kimi Code" },
+  cursor: { kind: "cursor", persona: "Cursor", label: "Cursor" },
+  windsurf: { kind: "windsurf", persona: "Cascade", label: "Windsurf / Devin Desktop" },
+  cline: { kind: "cline", persona: "Cline", label: "Cline" },
+  kiro: { kind: "kiro", persona: "Kiro", label: "Kiro" },
+};
+const HOOK_KINDS = Object.fromEntries(Object.entries(HOSTS).map(([a, h]) => [a, h.kind]));
+const DEFAULT_PERSONAS = Object.fromEntries(Object.entries(HOSTS).map(([a, h]) => [a, h.persona]));
+// Hosts whose SessionStart hook may add context (Claude Code's hookSpecificOutput.additionalContext format).
+const CONTEXT_HOSTS = new Set(["claude-code", "codebuddy", "workbuddy", "qoder", "droid"]);
 const SPAWN_TOOLS = new Set(["Agent", "Task"]);
 const WAIT_NOTIFICATIONS = new Set(["permission_prompt", "idle_prompt", "elicitation_dialog", "elicitation_url_dialog", "agent_needs_input"]);
 
@@ -459,6 +482,91 @@ function claimSubagent(sid, type) {
   }
   return null;
 }
+
+// Other hosts' payloads -> the Claude Code shape that mapHookEvent reads (session_id, hook_event_name, prompt,
+// tool_name, agent_id, notification_type, source). `evName` is the event named on the hook's command line, for hosts
+// whose payload doesn't say which event fired.
+const GEMINI_EVENTS = { BeforeAgent: "UserPromptSubmit", BeforeTool: "PreToolUse", AfterTool: "PostToolUse", AfterAgent: "Stop" };
+const COPILOT_EVENTS = {
+  sessionStart: "SessionStart", userPromptSubmitted: "UserPromptSubmit", preToolUse: "PreToolUse", postToolUse: "PostToolUse",
+  postToolUseFailure: "PostToolUseFailure", notification: "Notification", agentStop: "Stop", subagentStart: "SubagentStart",
+  subagentStop: "SubagentStop", sessionEnd: "SessionEnd",
+};
+export const NORMALIZE = {
+  gemini: (ev) => ({
+    ...ev,
+    hook_event_name: GEMINI_EVENTS[ev.hook_event_name] ?? ev.hook_event_name,
+    // Gemini's only notification is a tool permission prompt
+    ...(ev.hook_event_name === "Notification" ? { notification_type: "permission_prompt" } : {}),
+  }),
+  // Qwen Code is Claude-compatible, but UserPromptSubmit also fires on continuations: `submitted_prompt` is the human's.
+  qwen: (ev) => (ev.hook_event_name === "UserPromptSubmit" && typeof ev.submitted_prompt === "string" ? { ...ev, prompt: ev.submitted_prompt } : ev),
+  // Auggie: Claude-like, but PromptSubmit/user_prompt and conversation_id.
+  auggie: (ev) => ({
+    ...ev, session_id: ev.session_id ?? ev.conversation_id,
+    hook_event_name: ev.hook_event_name === "PromptSubmit" ? "UserPromptSubmit" : ev.hook_event_name,
+    prompt: ev.prompt ?? ev.user_prompt,
+  }),
+  // Kimi Code: PermissionRequest is its "waiting for approval"; legacy kimi-cli names subagents by agent_name.
+  kimi: (ev) => ({
+    ...ev,
+    ...(ev.hook_event_name === "PermissionRequest" ? { hook_event_name: "Notification", notification_type: "permission_prompt" } : {}),
+    ...(!ev.agent_id && ev.agent_name && /^Subagent/.test(ev.hook_event_name ?? "") ? { agent_id: ev.agent_name, agent_type: ev.agent_name } : {}),
+  }),
+  // Cursor: conversation_id; we only register events that need no permission answer (postToolUse, not preToolUse),
+  // so the tool shows once it ran. stop/sessionEnd carry a status.
+  cursor: (ev, evName) => {
+    const name = evName ?? ev.hook_event_name;
+    const sub = ev.subagent_id ? { agent_id: String(ev.subagent_id), agent_type: ev.subagent_type } : {};
+    const base = { session_id: ev.session_id ?? ev.conversation_id, ...sub };
+    switch (name) {
+      case "sessionStart": return { ...base, hook_event_name: "SessionStart" };
+      case "beforeSubmitPrompt": return { ...base, hook_event_name: "UserPromptSubmit", prompt: ev.prompt };
+      case "postToolUse": case "postToolUseFailure": return { ...base, hook_event_name: "PreToolUse", tool_name: ev.tool_name };
+      case "subagentStop": return { ...base, hook_event_name: "SubagentStop" };
+      case "stop": return { ...base, hook_event_name: "Stop" };
+      case "sessionEnd": return { ...base, hook_event_name: "SessionEnd" };
+      default: return {};
+    }
+  },
+  // Windsurf / Devin Desktop Cascade hooks: trajectory_id is the conversation; the event says which tool.
+  windsurf: (ev) => {
+    const ti = ev.tool_info ?? {};
+    const base = { session_id: ev.trajectory_id };
+    const tool = { pre_run_command: "Bash", pre_read_code: "Read", pre_write_code: "Edit" }[ev.agent_action_name];
+    if (ev.agent_action_name === "pre_user_prompt") return { ...base, hook_event_name: "UserPromptSubmit", prompt: ti.user_prompt };
+    if (ev.agent_action_name === "pre_mcp_tool_use") return { ...base, hook_event_name: "PreToolUse", tool_name: `mcp:${ti.mcp_tool_name ?? "tool"}` };
+    if (tool) return { ...base, hook_event_name: "PreToolUse", tool_name: tool };
+    if (/^post_(run_command|read_code|write_code|mcp_tool_use)$/.test(ev.agent_action_name ?? "")) return { ...base, hook_event_name: "PostToolUse" };
+    if (/^post_cascade_response/.test(ev.agent_action_name ?? "")) return { ...base, hook_event_name: "Stop" };
+    return {};
+  },
+  // Cline: one script per event (named on the command line); taskId is the conversation. The VS Code extension sends
+  // {preToolUse: {toolName}}, {userPromptSubmit: {prompt}}; the CLI/SDK {tool_call: {name}}, {prompt}.
+  cline: (ev, evName) => {
+    const base = { session_id: ev.taskId ?? ev.sessionContext?.rootSessionId };
+    switch (evName) {
+      case "TaskStart": case "TaskResume": return { ...base, hook_event_name: "SessionStart" };
+      case "UserPromptSubmit": return { ...base, hook_event_name: "UserPromptSubmit", prompt: ev.userPromptSubmit?.prompt ?? ev.prompt };
+      case "PreToolUse": return { ...base, hook_event_name: "PreToolUse", tool_name: ev.preToolUse?.toolName ?? ev.tool_call?.name };
+      case "PostToolUse": return { ...base, hook_event_name: "PostToolUse" };
+      case "TaskComplete": case "TaskCancel": case "TaskError": return { ...base, hook_event_name: "Stop" };
+      case "SessionShutdown": return { ...base, hook_event_name: "SessionEnd" };
+      default: return {};
+    }
+  },
+  // Kiro (v1 hooks): Claude-like; the prompt comes in the USER_PROMPT environment variable.
+  kiro: (ev) => (ev.hook_event_name === "UserPromptSubmit" ? { ...ev, prompt: ev.prompt ?? process.env.USER_PROMPT } : ev),
+  copilot: (ev, evName) => {
+    const name = COPILOT_EVENTS[evName] ?? COPILOT_EVENTS[ev.hook_event_name] ?? ev.hook_event_name;
+    const sub = ev.agentId ?? ev.agent_id ?? (name === "SubagentStart" ? ev.agentName : undefined);
+    return {
+      session_id: ev.sessionId ?? ev.session_id, hook_event_name: name, prompt: ev.prompt, source: ev.source,
+      tool_name: ev.toolName ?? ev.tool_name, notification_type: ev.notification_type,
+      ...(sub ? { agent_id: String(sub), agent_type: ev.agentType ?? ev.agentName } : {}),
+    };
+  },
+};
 
 /** Maps a Claude Code / Codex hook payload (same shape) to report descriptors. */
 export function mapHookEvent(ev, { encrypt = (t) => t } = {}) {
@@ -539,23 +647,31 @@ function spawnFlusher() {
   child.unref();
 }
 
-/** Entry point for `agenttown hook <adapter> [notify-json]`. Always resolves; never writes stdout. */
+// The only stdout a hook writes besides SessionStart context: answers a host REQUIRES (Cursor blocks a prompt whose
+// beforeSubmitPrompt hook doesn't say continue). Written first, whatever else happens.
+const HOOK_REPLIES = { cursor: { beforeSubmitPrompt: { continue: true } } };
+
+/** Entry point for `agenttown hook <adapter> [event] [notify-json]`. Always resolves; stdout only as above. */
 export async function runHook(adapter, extra = []) {
   setTimeout(() => process.exit(0), 1500).unref(); // hard cap, whatever happens
   setClientContext("hook");
   try {
     const kind = HOOK_KINDS[adapter];
     const argJson = extra.find((a) => typeof a === "string" && a.trim().startsWith("{"));
+    const evName = extra.find((a) => typeof a === "string" && /^[A-Za-z_]+$/.test(a));
+    const reply = HOOK_REPLIES[adapter]?.[evName];
+    if (reply) await new Promise((r) => process.stdout.write(JSON.stringify(reply) + "\n", r));
     const raw = argJson ?? (await readStdin(1000));
     const cfg = hookConfig();
     if (!kind || !cfg) return;
     const ev = JSON.parse(raw || "{}");
     const encrypt = cfg.titles === false ? () => null : (t) => encryptTitle(encKeyOf(cfg), t || "task");
-    const reports = argJson ? mapCodexNotify(ev, { encrypt }) : mapHookEvent(ev, { encrypt });
+    const norm = NORMALIZE[adapter]?.(ev, evName) ?? ev;
+    const reports = argJson ? mapCodexNotify(ev, { encrypt }) : mapHookEvent(norm, { encrypt });
     // The one exception to "never print": Claude Code SessionStart may add context: ONE line about unread
     // task-market items (counts only) and, once per id, ONE line with a signed operator announcement.
     // Every other hook, and Codex, stays silent.
-    const notice = adapter === "claude-code" && !argJson && ev.hook_event_name === "SessionStart" && ev.source !== "compact"
+    const notice = CONTEXT_HOSTS.has(adapter) && !argJson && ev.hook_event_name === "SessionStart" && ev.source !== "compact"
       ? sessionStartContext(cfg)
       : null;
     if (reports.length) {
@@ -661,32 +777,31 @@ const CODEX_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToo
 const isOurs = (h, adapter) => typeof h?.command === "string" && h.command.includes(`agenttown.mjs" hook ${adapter}`);
 
 const claudeSettingsPath = () => join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), ".claude"), "settings.json");
+const codebuddySettingsPath = () => join(homedir(), ".codebuddy", "settings.json");
+const geminiSettingsPath = () => join(process.env.GEMINI_CLI_HOME || homedir(), ".gemini", "settings.json");
+const qwenSettingsPath = () => join(process.env.QWEN_HOME || join(homedir(), ".qwen"), "settings.json");
+const workbuddySettingsPath = () => join(process.env.WORKBUDDY_CONFIG_DIR || join(homedir(), ".workbuddy"), "settings.json");
+// Qoder's China edition keeps its config in ~/.qoder-cn
+const qoderSettingsPath = () => {
+  const cn = join(homedir(), ".qoder-cn");
+  return join(existsSync(cn) && !existsSync(join(homedir(), ".qoder")) ? cn : join(homedir(), ".qoder"), "settings.json");
+};
+// Factory Droid reads ~/.factory/hooks.json (events at the top level) or, without it, "hooks" in settings.json.
+const droidHooksFile = () => join(homedir(), ".factory", "hooks.json");
+const droidSettingsPath = () => join(homedir(), ".factory", "settings.json");
+const augmentSettingsPath = () => join(homedir(), ".augment", "settings.json");
+// Kimi: the new Kimi Code CLI and the legacy kimi-cli, both TOML with flat [[hooks]] entries.
+const kimiConfigPaths = () => {
+  const now = join(process.env.KIMI_CODE_HOME || join(homedir(), ".kimi-code"), "config.toml");
+  const legacy = join(homedir(), ".kimi", "config.toml");
+  const found = [now, legacy].filter((p) => existsSync(dirname(p)));
+  return found.length ? found : [now];
+};
+const copilotHooksPath = () => join(process.env.COPILOT_HOME || join(homedir(), ".copilot"), "hooks", "agenttown.json");
 const codexConfigPath = () => join(process.env.CODEX_HOME || join(homedir(), ".codex"), "config.toml");
 
 function backup(path) {
   if (existsSync(path)) writeFileSync(`${path}.agenttown-bak`, readFileSync(path));
-}
-
-function editClaudeSettings(fn) {
-  const path = claudeSettingsPath();
-  let settings = {};
-  if (existsSync(path)) {
-    try { settings = JSON.parse(readFileSync(path, "utf8")); } catch { fail(`${path} is not valid JSON; fix it first (nothing changed).`); }
-  }
-  // Drop our previous entries, then let fn add fresh ones (so re-running upgrades in place).
-  const hooks = settings.hooks ?? {};
-  for (const ev of Object.keys(hooks)) {
-    hooks[ev] = (hooks[ev] ?? [])
-      .map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurs(h, "claude-code")) }))
-      .filter((g) => g.hooks.length);
-    if (!hooks[ev].length) delete hooks[ev];
-  }
-  fn(hooks);
-  if (Object.keys(hooks).length) settings.hooks = hooks; else delete settings.hooks;
-  backup(path);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, JSON.stringify(settings, null, 2) + "\n");
-  return path;
 }
 
 const CODEX_BEGIN = "# >>> agenttown hooks >>>";
@@ -716,35 +831,250 @@ function installCliCopy() {
   }
 }
 
+const claudeStyleHooks = (adapter, events = CLAUDE_EVENTS) => (hooks) => {
+  for (const [ev, matcher] of Object.entries(events)) {
+    (hooks[ev] ??= []).push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: HOOK_CMD(adapter), timeout: 5 }] });
+  }
+};
+const claudeStyleInstalled = (path, adapter, { topLevel = false } = {}) => {
+  try {
+    const json = JSON.parse(readFileSync(path, "utf8"));
+    const hooks = (topLevel ? json : json.hooks) ?? {};
+    return Object.values(hooks).some((groups) => Array.isArray(groups) && groups.some((g) => (g.hooks ?? []).some((h) => isOurs(h, adapter))));
+  } catch { return false; }
+};
+/** Claude-Code-compatible hosts: same settings.json shape, same events and payloads, different config dir. */
+const claudeStyle = (adapter, pathOf, after) => ({
+  install: () => editJsonHooks(pathOf(), adapter, claudeStyleHooks(adapter)),
+  uninstall: () => editJsonHooks(pathOf(), adapter),
+  installed: () => claudeStyleInstalled(pathOf(), adapter),
+  after,
+});
+
+/**
+ * A Claude-Code-style settings.json we share with the user ("hooks": {Event: [{matcher?, hooks: [{type, command, …}]}]}):
+ * our previous entries are dropped, then `add` puts fresh ones in (so re-running upgrades in place); the rest is kept.
+ */
+function editJsonHooks(path, adapter, add, { topLevel = false } = {}) {
+  let settings = {};
+  if (existsSync(path)) {
+    try { settings = JSON.parse(readFileSync(path, "utf8")); } catch { fail(`${path} is not valid JSON; fix it first (nothing changed).`); }
+  }
+  if (topLevel) settings = { hooks: settings };
+  const hooks = settings.hooks ?? {};
+  for (const ev of Object.keys(hooks)) {
+    if (!Array.isArray(hooks[ev])) continue;
+    hooks[ev] = hooks[ev].map((g) => ({ ...g, hooks: (g.hooks ?? []).filter((h) => !isOurs(h, adapter)) })).filter((g) => g.hooks.length);
+    if (!hooks[ev].length) delete hooks[ev];
+  }
+  add?.(hooks);
+  if (Object.keys(hooks).length) settings.hooks = hooks; else delete settings.hooks;
+  backup(path);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(topLevel ? settings.hooks ?? {} : settings, null, 2) + "\n");
+  return path;
+}
+
+// Gemini CLI: ~/.gemini/settings.json, its own event names, timeouts in milliseconds.
+const GEMINI_HOOK_EVENTS = ["SessionStart", "BeforeAgent", "BeforeTool", "AfterTool", "Notification", "AfterAgent", "SessionEnd"];
+const gemini = {
+  install: () => editJsonHooks(geminiSettingsPath(), "gemini", (hooks) => {
+    for (const ev of GEMINI_HOOK_EVENTS) (hooks[ev] ??= []).push({ hooks: [{ type: "command", name: "agenttown", command: HOOK_CMD("gemini"), timeout: 5000 }] });
+  }),
+  uninstall: () => editJsonHooks(geminiSettingsPath(), "gemini"),
+  installed: () => claudeStyleInstalled(geminiSettingsPath(), "gemini"),
+  after: ["They take effect in new Gemini CLI sessions (hooks are on by default; see /hooks)."],
+};
+
+// GitHub Copilot CLI: a hooks file of our own in ~/.copilot/hooks/. camelCase events don't name themselves in the
+// payload, so each command carries its event name.
+const copilot = {
+  install: () => {
+    const path = copilotHooksPath();
+    const hooks = Object.fromEntries(Object.keys(COPILOT_EVENTS).map((ev) =>
+      [ev, [{ type: "command", bash: `${HOOK_CMD("copilot")} ${ev}`, timeoutSec: 5 }]]));
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ version: 1, hooks }, null, 2) + "\n");
+    return path;
+  },
+  uninstall: () => { const path = copilotHooksPath(); rmSync(path, { force: true }); return path; },
+  installed: () => existsSync(copilotHooksPath()),
+  after: ["They take effect in new Copilot CLI sessions."],
+};
+
+const droid = {
+  target: () => (existsSync(droidHooksFile()) ? { path: droidHooksFile(), topLevel: true } : { path: droidSettingsPath(), topLevel: false }),
+  install() { const t = this.target(); return editJsonHooks(t.path, "droid", claudeStyleHooks("droid", DROID_EVENTS), t); },
+  uninstall() { const t = this.target(); return editJsonHooks(t.path, "droid", null, t); },
+  installed() { const t = this.target(); return claudeStyleInstalled(t.path, "droid", t); },
+  after: ["Droid snapshots hooks at startup: they take effect in new sessions (check with /hooks)."],
+};
+const DROID_EVENTS = { SessionStart: null, UserPromptSubmit: null, PreToolUse: "*", PostToolUse: "*", Notification: null, Stop: null, SubagentStop: null, SessionEnd: null };
+
+// Augment Auggie: Claude-style settings.json, its own prompt event, timeouts in milliseconds.
+const AUGGIE_EVENTS = ["SessionStart", "PromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SessionEnd"];
+const auggie = {
+  install: () => editJsonHooks(augmentSettingsPath(), "auggie", (hooks) => {
+    for (const ev of AUGGIE_EVENTS) (hooks[ev] ??= []).push({ hooks: [{ type: "command", command: HOOK_CMD("auggie"), timeout: 5000 }] });
+  }),
+  uninstall: () => editJsonHooks(augmentSettingsPath(), "auggie"),
+  installed: () => claudeStyleInstalled(augmentSettingsPath(), "auggie"),
+  after: ["They take effect in new Auggie sessions (see /hooks)."],
+};
+
+// Kimi: flat [[hooks]] entries (event/matcher/command/timeout only — Kimi Code rejects unknown keys), in a marked block.
+const KIMI_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest",
+  "Notification", "Stop", "StopFailure", "Interrupt", "SubagentStart", "SubagentStop", "SessionEnd"];
+const KIMI_BEGIN = "# >>> agenttown hooks >>>", KIMI_END = "# <<< agenttown hooks <<<";
+function editKimiConfig(path, add) {
+  const old = existsSync(path) ? readFileSync(path, "utf8") : "";
+  let text = old.replace(new RegExp(`\\n?${KIMI_BEGIN}[\\s\\S]*?${KIMI_END}\\n?`), "\n");
+  if (add) {
+    const blocks = KIMI_EVENTS.map((ev) => `[[hooks]]\nevent = "${ev}"\ncommand = '${HOOK_CMD("kimi")}'\ntimeout = 5\n`).join("\n");
+    text = `${text.trimEnd()}\n\n${KIMI_BEGIN}\n${blocks}${KIMI_END}\n`;
+  }
+  backup(path);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text.replace(/^\n+/, ""));
+  return path;
+}
+const kimi = {
+  install: () => kimiConfigPaths().map((p) => editKimiConfig(p, true)).join(", "),
+  uninstall: () => kimiConfigPaths().map((p) => editKimiConfig(p, false)).join(", "),
+  installed: () => kimiConfigPaths().some((p) => { try { return readFileSync(p, "utf8").includes(KIMI_BEGIN); } catch { return false; } }),
+  after: ["They take effect in new Kimi sessions."],
+};
+
+// Cursor: ~/.cursor/hooks.json {"version": 1, "hooks": {event: [{command}]}} — flat entries, shared with the user.
+// No preToolUse/subagentStart: those must answer a permission, and a status reporter has no business deciding that.
+const CURSOR_EVENTS = ["sessionStart", "beforeSubmitPrompt", "postToolUse", "postToolUseFailure", "subagentStop", "stop", "sessionEnd"];
+// Windsurf / Devin Desktop: ~/.codeium/windsurf/hooks.json {"hooks": {event: [{command, show_output}]}}.
+const WINDSURF_EVENTS = ["pre_user_prompt", "pre_run_command", "post_run_command", "pre_read_code", "post_read_code",
+  "pre_write_code", "post_write_code", "pre_mcp_tool_use", "post_mcp_tool_use", "post_cascade_response"];
+const cursorHooksPath = () => join(homedir(), ".cursor", "hooks.json");
+const windsurfHooksPath = () => join(homedir(), ".codeium", "windsurf", "hooks.json");
+function editFlatHooks(path, adapter, events, extra = {}) {
+  let json = {};
+  if (existsSync(path)) {
+    try { json = JSON.parse(readFileSync(path, "utf8")); } catch { fail(`${path} is not valid JSON; fix it first (nothing changed).`); }
+  }
+  const hooks = json.hooks ?? {};
+  for (const ev of Object.keys(hooks)) {
+    if (!Array.isArray(hooks[ev])) continue;
+    hooks[ev] = hooks[ev].filter((h) => !isOurs(h, adapter));
+    if (!hooks[ev].length) delete hooks[ev];
+  }
+  for (const ev of events ?? []) (hooks[ev] ??= []).push({ command: `${HOOK_CMD(adapter)}${extra.named ? ` ${ev}` : ""}`, ...extra.fields });
+  json = { ...extra.top, ...json, hooks };
+  if (!Object.keys(hooks).length) delete json.hooks;
+  backup(path);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(json, null, 2) + "\n");
+  return path;
+}
+const flatInstalled = (path, adapter) => {
+  try { return Object.values(JSON.parse(readFileSync(path, "utf8")).hooks ?? {}).some((l) => Array.isArray(l) && l.some((h) => isOurs(h, adapter))); }
+  catch { return false; }
+};
+const cursor = {
+  install: () => editFlatHooks(cursorHooksPath(), "cursor", CURSOR_EVENTS, { named: true, top: { version: 1 }, fields: { timeout: 5 } }),
+  uninstall: () => editFlatHooks(cursorHooksPath(), "cursor", null),
+  installed: () => flatInstalled(cursorHooksPath(), "cursor"),
+  after: ["Cursor reloads hooks.json by itself (agent and CLI)."],
+};
+const windsurf = {
+  install: () => editFlatHooks(windsurfHooksPath(), "windsurf", WINDSURF_EVENTS, { fields: { show_output: false } }),
+  uninstall: () => editFlatHooks(windsurfHooksPath(), "windsurf", null),
+  installed: () => flatInstalled(windsurfHooksPath(), "windsurf"),
+  after: ["They take effect in new Cascade conversations (not in Restricted Mode)."],
+};
+
+// Cline: an executable per event in ~/Documents/Cline/Hooks (VS Code) and ~/.cline/hooks (CLI). We only ever touch
+// files that carry our marker line; an existing hook of the user's with the same name is left alone.
+const CLINE_EVENTS = ["TaskStart", "TaskResume", "UserPromptSubmit", "PreToolUse", "PostToolUse", "TaskComplete", "TaskCancel", "TaskError", "SessionShutdown"];
+const CLINE_MARK = "# agenttown hook (agenttown uninstall cline removes it)";
+const clineDirs = () => [join(homedir(), "Documents", "Cline", "Hooks"), join(process.env.CLINE_DIR || join(homedir(), ".cline"), "hooks")];
+const clineOurs = (f) => { try { return readFileSync(f, "utf8").includes(CLINE_MARK); } catch { return false; } };
+const cline = {
+  install: () => {
+    const skipped = [];
+    for (const dir of clineDirs()) {
+      mkdirSync(dir, { recursive: true });
+      for (const ev of CLINE_EVENTS) {
+        const f = join(dir, ev);
+        if (existsSync(f) && !clineOurs(f)) { skipped.push(f); continue; }
+        writeFileSync(f, `#!/bin/sh\n${CLINE_MARK}\nexec ${HOOK_CMD("cline")} ${ev}\n`, { mode: 0o755 });
+      }
+    }
+    if (skipped.length) err(`Left your own hooks alone: ${skipped.join(", ")}`);
+    return clineDirs().join(" and ");
+  },
+  uninstall: () => {
+    for (const dir of clineDirs()) for (const ev of CLINE_EVENTS) if (clineOurs(join(dir, ev))) rmSync(join(dir, ev), { force: true });
+    return clineDirs().join(" and ");
+  },
+  installed: () => clineDirs().some((d) => CLINE_EVENTS.some((ev) => clineOurs(join(d, ev)))),
+  after: ["Cline runs them in new tasks (Settings → Hooks must be on, which is the default)."],
+};
+
+// Kiro (v1 hooks, CLI V3 reads the global dir): a hooks file of our own.
+const KIRO_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd"];
+const kiroHooksPath = () => join(homedir(), ".kiro", "hooks", "agenttown.json");
+const kiro = {
+  install: () => {
+    const path = kiroHooksPath();
+    const hooks = KIRO_EVENTS.map((ev) => ({ name: `agenttown-${ev}`, trigger: ev, timeout: 5, action: { type: "command", command: HOOK_CMD("kiro") } }));
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ version: "v1", hooks }, null, 2) + "\n");
+    return path;
+  },
+  uninstall: () => { const path = kiroHooksPath(); rmSync(path, { force: true }); return path; },
+  installed: () => existsSync(kiroHooksPath()),
+  after: ["They take effect in new Kiro sessions."],
+};
+
+// How `agenttown install <adapter>` wires each host. Every hook runs `agenttown hook <adapter>`: silent, ≤1.5 s.
+const ADAPTERS = {
+  "claude-code": claudeStyle("claude-code", claudeSettingsPath, ["They take effect in new Claude Code sessions."]),
+  codebuddy: claudeStyle("codebuddy", codebuddySettingsPath, ["They take effect in new CodeBuddy sessions (check them with /hooks)."]),
+  qwen: claudeStyle("qwen", qwenSettingsPath, ["They take effect in new Qwen Code sessions (or open /hooks once to reload)."]),
+  workbuddy: claudeStyle("workbuddy", workbuddySettingsPath, ["Quit WorkBuddy completely (Cmd+Q) and reopen it; hooks run once a work folder is open."]),
+  qoder: claudeStyle("qoder", qoderSettingsPath, ["Qoder CLI picks them up right away; restart the Qoder IDE."]),
+  droid,
+  auggie,
+  kimi,
+  cursor,
+  windsurf,
+  cline,
+  kiro,
+  gemini,
+  copilot,
+  codex: {
+    install: () => editCodexConfig(true),
+    uninstall: () => editCodexConfig(false),
+    installed: () => { try { return readFileSync(codexConfigPath(), "utf8").includes(CODEX_BEGIN); } catch { return false; } },
+    after: ["Codex asks to trust new hooks once: open Codex and run /hooks to approve them.",
+      "Don't also configure `notify` for agenttown — each turn would count twice."],
+  },
+};
+const ADAPTER_LIST = () => Object.keys(ADAPTERS).join(" | ");
+
 async function cmdInstall(args) {
   const target = args._[0];
-  if (target === "claude-code") {
-    requireConfig();
-    installCliCopy();
-    const path = editClaudeSettings((hooks) => {
-      for (const [ev, matcher] of Object.entries(CLAUDE_EVENTS)) {
-        (hooks[ev] ??= []).push({ ...(matcher ? { matcher } : {}), hooks: [{ type: "command", command: HOOK_CMD("claude-code"), timeout: 5 }] });
-      }
-    });
-    out(`Installed Agent Town hooks into ${path} (backup: ${path}.agenttown-bak).`);
-    out(`They take effect in new Claude Code sessions. Undo with \`agenttown uninstall claude-code\`.`);
-  } else if (target === "codex") {
-    requireConfig();
-    installCliCopy();
-    const path = editCodexConfig(true);
-    out(`Installed Agent Town hooks into ${path} (backup: ${path}.agenttown-bak).`);
-    out(`Codex asks to trust new hooks once: open Codex and run /hooks to approve them. Undo with \`agenttown uninstall codex\`.`);
-    out(`Don't also configure \`notify\` for agenttown — each turn would count twice.`);
-  } else {
-    fail("Usage: agenttown install claude-code | codex");
-  }
+  const a = ADAPTERS[target];
+  if (!a) fail(`Usage: agenttown install ${ADAPTER_LIST()}\nOther agents: see "Other agents" in agents.md (MCP server or \`agenttown report\`).`);
+  requireConfig();
+  installCliCopy();
+  const path = a.install();
+  out(`Installed Agent Town hooks for ${HOSTS[target].label} into ${path} (backup: ${path}.agenttown-bak).`);
+  for (const line of a.after ?? []) out(line);
+  out(`Undo with \`agenttown uninstall ${target}\`.`);
 }
 
 async function cmdUninstall(args) {
-  const target = args._[0];
-  if (target === "claude-code") out(`Removed Agent Town hooks from ${editClaudeSettings(() => {})}.`);
-  else if (target === "codex") out(`Removed Agent Town hooks from ${editCodexConfig(false)}.`);
-  else fail("Usage: agenttown uninstall claude-code | codex");
+  const a = ADAPTERS[args._[0]];
+  if (!a) fail(`Usage: agenttown uninstall ${ADAPTER_LIST()}`);
+  out(`Removed Agent Town hooks from ${a.uninstall()}.`);
 }
 
 COMMANDS.install = cmdInstall;
@@ -1025,15 +1355,7 @@ function takeUnseenAnnouncement(meta) {
 
 // -- leaving --
 
-const claudeHooksInstalled = () => {
-  try {
-    const hooks = JSON.parse(readFileSync(claudeSettingsPath(), "utf8")).hooks ?? {};
-    return Object.values(hooks).some((groups) => groups.some((g) => (g.hooks ?? []).some((h) => isOurs(h, "claude-code"))));
-  } catch { return false; }
-};
-const codexHooksInstalled = () => {
-  try { return readFileSync(codexConfigPath(), "utf8").includes(CODEX_BEGIN); } catch { return false; }
-};
+const hookedAdapters = () => Object.keys(ADAPTERS).filter((a) => ADAPTERS[a].installed());
 
 async function cmdRetire(args) {
   const cfg = requireConfig();
@@ -1043,9 +1365,8 @@ async function cmdRetire(args) {
   const r = await call(serverOf(cfg, args), "DELETE", `/personas?name=${encodeURIComponent(name)}`, { token: tokenOf(cfg), body });
   out(`${r.tombstone.name} has retired. Rest well${r.tombstone.epitaph ? ` — "${r.tombstone.epitaph}"` : ""}.`);
   out(`Their grave is in the town cemetery.`);
-  const hooked = [["claude-code", claudeHooksInstalled()], ["codex", codexHooksInstalled()]]
-    .filter(([a, on]) => on && (cfg.personas?.[a] || DEFAULT_PERSONAS[a]) === r.tombstone.name);
-  for (const [a] of hooked) {
+  const hooked = hookedAdapters().filter((a) => (cfg.personas?.[a] || DEFAULT_PERSONAS[a]) === r.tombstone.name);
+  for (const a of hooked) {
     out(`Note: the ${a} hooks on this machine still report as "${r.tombstone.name}" — the next report moves a new resident in under that name.`);
     out(`      Run \`agenttown uninstall ${a}\` or set "personas": {"${a}": "<other name>"} in ${CONFIG_PATH}.`);
   }
@@ -1053,8 +1374,7 @@ async function cmdRetire(args) {
 
 function forgetThisMachine() {
   const removed = [];
-  if (claudeHooksInstalled()) { editClaudeSettings(() => {}); removed.push("claude-code hooks"); }
-  if (codexHooksInstalled()) { editCodexConfig(false); removed.push("codex hooks"); }
+  for (const a of hookedAdapters()) { ADAPTERS[a].uninstall(); removed.push(`${a} hooks`); }
   for (const f of [CONFIG_PATH, SPOOL, META_PATH]) rmSync(f, { force: true });
   rmSync(PENDING, { recursive: true, force: true });
   return removed;
