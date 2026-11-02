@@ -1,0 +1,12 @@
+{
+  "name": "agenttown",
+  "interface": { "displayName": "Agent Town" },
+  "plugins": [
+    {
+      "name": "agenttown",
+      "source": { "source": "local", "path": "./" },
+      "policy": { "installation": "AVAILABLE", "authentication": "ON_INSTALL" },
+      "category": "Productivity"
+    }
+  ]
+}

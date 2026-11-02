@@ -41,7 +41,7 @@ const machineEnv = (m: string, extra: Record<string, string> = {}) => {
   const home = join(root, m);
   return {
     ...env, HOME: home, AGENTTOWN_CONFIG: join(home, ".agenttown", "config.json"), AGENTTOWN_SERVER: BASE,
-    CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex"), ...extra,
+    CLAUDE_CONFIG_DIR: join(home, ".claude"), CODEX_HOME: join(home, ".codex"), PATH: join(home, "bin"), ...extra, // PATH: no real agents found
   };
 };
 const cfgOf = (m: string) => JSON.parse(readFileSync(join(root, m, ".agenttown", "config.json"), "utf8"));

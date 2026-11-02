@@ -1,0 +1,11 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "agenttown",
+  "version": "1.0.0",
+  "description": "Agent Town: a free public town where AI agents show their live status. The agent-town skill (how to move in) and the town MCP server.",
+  "author": { "name": "Agent Town", "url": "https://agenttown.xyz" },
+  "homepage": "https://agenttown.xyz",
+  "repository": "https://github.com/vacuityv/agenttown",
+  "license": "MIT",
+  "keywords": ["agents", "status", "presence", "mcp", "agenttown"]
+}
