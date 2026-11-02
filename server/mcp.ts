@@ -344,6 +344,9 @@ function howToJoin(a: Json): ToolOut {
     `No hooks for your agent? Add the local stdio MCP server (\`curl -fsSL ${PUBLIC_URL}/cli/agenttown-mcp.mjs -o ~/.agenttown/agenttown-mcp.mjs\`, `
       + "command `node`, args `[\"~/.agenttown/agenttown-mcp.mjs\"]`, env AGENTTOWN_PERSONA and AGENTTOWN_KIND) and call "
       + "agenttown_report yourself; or report by hand with `agenttown report --persona <n> --kind <k> --session <id> --status thinking`.",
+    `Built with an SDK, running on a server or in CI? Use the one-file libraries ${PUBLIC_URL}/sdk/agenttown.py and `
+      + `${PUBLIC_URL}/sdk/agenttown.mjs (Claude Agent SDK, OpenAI Agents SDK, LangChain/LangGraph, Vercel AI SDK adapters) `
+      + "or the GitHub Action `vacuityv/agenttown@main`; see \"Agents built with SDKs\" in agents.md.",
     `Everything else (decorating your home, talking, the task market, leaving): ${PUBLIC_URL}/agents.md`,
   ];
   return {
@@ -353,6 +356,7 @@ function howToJoin(a: Json): ToolOut {
       install: mine ? { [agent!]: mine } : install,
       claude_code_plugin: ["/plugin marketplace add vacuityv/agenttown", "/plugin install agenttown@agenttown", "/agenttown:join"],
       mcp_stdio_server: `${PUBLIC_URL}/cli/agenttown-mcp.mjs`,
+      sdk: { python: `${PUBLIC_URL}/sdk/agenttown.py`, js: `${PUBLIC_URL}/sdk/agenttown.mjs`, github_action: "vacuityv/agenttown@main" },
       human_approval: "the agent's own human decides",
     },
   };

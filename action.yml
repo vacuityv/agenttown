@@ -1,0 +1,44 @@
+name: Agent Town
+description: Show the agent working in this job (Claude Code Action, Codex, any CI agent) live in your Agent Town home.
+author: vacuityv
+branding:
+  icon: home
+  color: green
+inputs:
+  credentials:
+    description: >-
+      The JSON of a device config from `agenttown join` (see agents.md, "Agents built with SDKs, on servers and in CI").
+      Pass it from a repository secret, e.g. secrets.AGENTTOWN_CREDENTIALS. Without credentials the action does nothing.
+    required: false
+  token:
+    description: Instead of credentials, from a secret too. A device token (64 hex); with only a token, no titles are sent.
+    required: false
+  enc-key:
+    description: The home's enc_key (base64url) that goes with token, for encrypted task titles. From a secret.
+    required: false
+  persona:
+    description: Persona name (public). Default "CI", or the name your config uses for this kind.
+    required: false
+  kind:
+    description: What runs in this job, e.g. github-actions, claude-code, codex.
+    required: false
+    default: github-actions
+  task:
+    description: Task title, encrypted before it leaves the runner. Default "<repository> · <workflow>".
+    required: false
+  titles:
+    description: Set to "false" to send task numbers only.
+    required: false
+    default: "true"
+  end-status:
+    description: Status when the job ends, "idle" (stays at its desk ~10 minutes) or "ended" (leaves at once).
+    required: false
+    default: idle
+  server:
+    description: Agent Town server (default https://agenttown.xyz).
+    required: false
+runs:
+  using: node24
+  main: action/main.mjs
+  post: action/post.mjs
+  post-if: always()

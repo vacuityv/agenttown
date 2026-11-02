@@ -88,6 +88,8 @@ const en = {
   "spot.radio": "radio", "spot.rest": "sofa", "spot.door": "front door", "spot.bed": "bed", "spot.agent": "meeting spot",
   "kind.codebuddy": "CodeBuddy", "kind.workbuddy": "WorkBuddy", "kind.gemini": "Gemini CLI", "kind.qwen": "Qwen Code", "kind.copilot": "Copilot", "kind.qoder": "Qoder", "kind.droid": "Droid", "kind.auggie": "Auggie", "kind.kimi": "Kimi", "kind.cursor": "Cursor", "kind.windsurf": "Windsurf", "kind.cline": "Cline", "kind.kiro": "Kiro", "kind.opencode": "OpenCode", "kind.openclaw": "OpenClaw", "kind.hermes": "Hermes", "kind.goose": "Goose", "kind.amp": "Amp", "kind.trae": "Trae",
   "kind.claude-code": "Claude Code", "kind.codex": "Codex", "kind.other": "Agent", "kind.home": "Home",
+  // SDK / framework / CI agents (public/sdk, action.yml)
+  "kind.sdk": "SDK agent", "kind.claude-agent-sdk": "Claude Agent SDK", "kind.openai-agents": "OpenAI Agents", "kind.langchain": "LangChain", "kind.langgraph": "LangGraph", "kind.ai-sdk": "AI SDK", "kind.github-actions": "GitHub Actions", "kind.ci": "CI",
   // town
   "town.aria": "Village map. Each home is shown from above with its residents inside. Click a home to visit.",
   "town.zoomIn": "Zoom in", "town.zoomOut": "Zoom out", "town.recenter": "Back to the homes", "town.dismiss": "Dismiss",
@@ -249,6 +251,7 @@ const zh = {
   "spot.radio": "收音机", "spot.rest": "沙发", "spot.door": "门口", "spot.bed": "床", "spot.agent": "碰头处",
   "kind.codebuddy": "CodeBuddy", "kind.workbuddy": "WorkBuddy", "kind.gemini": "Gemini CLI", "kind.qwen": "Qwen Code", "kind.copilot": "Copilot", "kind.qoder": "Qoder", "kind.droid": "Droid", "kind.auggie": "Auggie", "kind.kimi": "Kimi", "kind.cursor": "Cursor", "kind.windsurf": "Windsurf", "kind.cline": "Cline", "kind.kiro": "Kiro", "kind.opencode": "OpenCode", "kind.openclaw": "OpenClaw", "kind.hermes": "Hermes", "kind.goose": "Goose", "kind.amp": "Amp", "kind.trae": "Trae",
   "kind.claude-code": "Claude Code", "kind.codex": "Codex", "kind.other": "Agent", "kind.home": "家",
+  "kind.sdk": "SDK agent", "kind.claude-agent-sdk": "Claude Agent SDK", "kind.openai-agents": "OpenAI Agents", "kind.langchain": "LangChain", "kind.langgraph": "LangGraph", "kind.ai-sdk": "AI SDK", "kind.github-actions": "GitHub Actions", "kind.ci": "CI",
   "town.aria": "小镇地图。每户人家都从上往下看，里面是住户。点击一户进去看看。",
   "town.zoomIn": "放大", "town.zoomOut": "缩小", "town.recenter": "回到住户中间", "town.dismiss": "关闭",
   "town.introTitle": "一个住满 AI 编程 agent 的小村子",

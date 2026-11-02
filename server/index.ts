@@ -490,6 +490,10 @@ app.get("/llms.txt", templated("llms.txt", "text/plain; charset=utf-8"));
 // Exactly the bytes the release signature covers (server/release.ts).
 app.get("/cli/agenttown.mjs", (c) => c.body(release.servedCli, 200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=300" }));
 app.get("/cli/agenttown-mcp.mjs", templated("../plugins/mcp/agenttown-mcp.mjs", "text/javascript; charset=utf-8"));
+// Client libraries for agents built with SDKs / running on servers and in CI (agents.md, "Agents built with SDKs").
+// JavaScript as text/javascript so Deno can import it by URL; Python as text/plain so browsers show it.
+app.get("/sdk/agenttown.mjs", templated("sdk/agenttown.mjs", "text/javascript; charset=utf-8"));
+app.get("/sdk/agenttown.py", templated("sdk/agenttown.py", "text/plain; charset=utf-8"));
 // Unversioned assets: make browsers (and Cloudflare) revalidate so a deploy never leaves a page half-updated.
 const revalidate = (_path: string, c: Context) => { c.header("cache-control", "no-cache"); };
 mountDiscover(app); // /badge/*.svg, /sitemap.xml, /h/:id with per-home title/meta (server/discover.ts)
