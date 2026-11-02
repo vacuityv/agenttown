@@ -38,13 +38,16 @@ export async function mountAnnouncement() {
 }
 
 /** The owner's outdated-CLI notice for their own home page; `cli` is /v1/me's cli object. Returns a node or null. */
+/** One line of copyable text: the text in a <code>, a Copy button next to it. */
+export const copyLine = (text) => el("div", { class: "cc-line" }, el("code", { text }),
+  el("button", { type: "button", class: "btn small ghost", text: t("invite.copy"), onclick: async (e) => {
+    const b = e.currentTarget;
+    try { await navigator.clipboard.writeText(text); } catch {}
+    b.textContent = t("invite.copiedShort");
+  } }));
+
 export function cliNotice(cli, rerender) {
   if (!cli?.outdated || lsGet(CLI_KEY) === String(cli.latest)) return null;
-  const copyLine = (cmd) => el("div", { class: "cc-line" }, el("code", { text: cmd }),
-    el("button", { type: "button", class: "btn small ghost", text: t("invite.copy"), onclick: async (e) => {
-      try { await navigator.clipboard.writeText(cmd); } catch {}
-      e.currentTarget.textContent = t("invite.copiedShort");
-    } }));
   return el("div", { class: "notice cli-notice", role: "status" },
     el("button", { type: "button", class: "notice-close", "aria-label": t("ann.dismiss"), title: t("ann.dismiss"), text: "×",
       onclick: () => { lsSet(CLI_KEY, String(cli.latest)); rerender(); } }),
