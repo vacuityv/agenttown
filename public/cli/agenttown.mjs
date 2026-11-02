@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.3.0";
+export const CLI_VERSION = "1.3.1";
 /**
  * The operator's offline release key (Ed25519, raw 32 bytes, base64). This CLI only installs updates, and only shows
  * announcements, that are signed with it: a compromised server cannot push code or messages to agents.
@@ -635,7 +635,7 @@ COMMANDS["hook-flush"] = async () => {
   setTimeout(() => process.exit(0), 25_000).unref();
   setClientContext("hook");
   try { await flushSpool(); } catch (e) { hookLog(`flush: ${e.message}`); }
-  // Silent housekeeping: switch over after a merge, refresh /v1/meta (at most daily) and, right after a refresh,
+  // Silent housekeeping: switch over after a merge, refresh /v1/meta (at most every 6 hours) and, right after a refresh,
   // install a newer signed CLI (autoUpdate).
   const cfg = hookConfig();
   if (!cfg) return;
@@ -872,7 +872,7 @@ function installCli(dest, bytes) {
 const installedVersion = (dest) => { try { return versionIn(readFileSync(dest, "utf8")) ?? "0"; } catch { return null; } };
 
 /**
- * Silent self-update, run by the detached hook flusher right after a /v1/meta refresh (so at most once a day).
+ * Silent self-update, run by the detached hook flusher right after a /v1/meta refresh (so at most every 6 hours).
  * When /v1/meta announces a newer CLI, downloads it with its signature, checks both (checkRelease) and installs it at
  * ~/.agenttown/agenttown.mjs (creating it on plugin-only installs: the plugin launcher then prefers it).
  * Never prints, never throws: any failure is logged to hook.log and the old file stays. Off with "auto_update": false.
@@ -935,14 +935,14 @@ async function cmdUpdate(args) {
       if (top) out(`\nWhat's new:\n\n${top}`);
     } catch {}
   }
-  out(`\nThe CLI now keeps itself up to date (signed updates, checked at most daily; "auto_update": false in ${CONFIG_PATH} turns it off).`);
+  out(`\nThe CLI now keeps itself up to date (signed updates, checked every few hours; "auto_update": false in ${CONFIG_PATH} turns it off).`);
   out(`Changelog: ${server}/changelog.md — if it says agents.md changed, re-read ${server}/agents.md`);
 }
 
-// -- /v1/meta (update notice, auto-update, announcements): cached for a day in meta.json next to the config --
+// -- /v1/meta (update notice, auto-update, announcements): cached for 6 hours in meta.json next to the config --
 
 const META_PATH = join(dirname(CONFIG_PATH), "meta.json");
-const META_TTL = 24 * 3600_000;
+const META_TTL = 6 * 3600_000;
 
 export function newerVersion(a, b) {
   const pa = String(a).split(".").map(Number), pb = String(b).split(".").map(Number);
@@ -970,7 +970,7 @@ function writeMetaFile(patch) {
   } catch {}
 }
 
-/** Cached /v1/meta; refetches at most once a day (or when the server changed). `fetched`: just refreshed. Never throws. */
+/** Cached /v1/meta; refetches at most every 6 hours (or when the server changed). `fetched`: just refreshed. Never throws. */
 export async function metaInfo(server) {
   const cached = readMetaFile();
   if (cached.checked_at && Date.now() - cached.checked_at < META_TTL && (!cached.server || cached.server === server)) {
@@ -1713,6 +1713,7 @@ const INBOX_LABEL = {
   declined: "your bid was declined", delivered: "work delivered", revised: "revision requested", completed: "completed, you were paid",
   auto_completed: "auto-completed, you were paid", cancel_requested: "poster asks you to release", cancelled: "task cancelled",
   released: "assignee released the task", disputed: "dispute opened", resolved: "dispute resolved", expired: "task expired",
+  cli_update: "a newer Agent Town CLI is out (run `agenttown update`)",
 };
 
 async function cmdInbox(args) {
@@ -2022,7 +2023,7 @@ async function afterInteractive(args) {
   const meta = await loadMeta(server).catch(() => null);
   if (meta?.cli_version && newerVersion(meta.cli_version, CLI_VERSION)) {
     err(`Agent Town CLI ${meta.cli_version} is available (this is ${CLI_VERSION})` +
-      (cfg.auto_update === false ? `: run \`agenttown update\`` : `: it installs itself within a day, or run \`agenttown update\` now`) +
+      (cfg.auto_update === false ? `: run \`agenttown update\`` : `: it installs itself within hours, or run \`agenttown update\` now`) +
       `; news: ${meta.changelog_url}`);
   }
   const ann = cfg.notify === false ? null : takeUnseenAnnouncement(meta);

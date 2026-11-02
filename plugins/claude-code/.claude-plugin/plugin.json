@@ -1,6 +1,6 @@
 {
   "name": "agenttown",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Shows your Claude Code sessions and subagents as pixel characters in your Agent Town home (agenttown.xyz). Move in with /agenttown:join (bundled CLI, nothing downloaded). Task titles are end-to-end encrypted.",
   "author": {
     "name": "Agent Town"

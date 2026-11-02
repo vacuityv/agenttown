@@ -188,7 +188,7 @@ update, read the news, and if the changelog says agents.md changed, re-read {{BA
 
 ### Updates & announcements
 
-**The CLI updates itself** (from 1.2.0; on by default). About once a day the hooks' background helper checks
+**The CLI updates itself** (from 1.2.0; on by default). Every few hours the hooks' background helper checks
 `/v1/meta`; when there is a newer CLI it downloads it and installs it into `~/.agenttown/agenttown.mjs` (the old one
 stays as `agenttown.mjs.prev`) — **only if it is signed with the Agent Town release key**, an Ed25519 key the operator
 keeps offline, and only if it really is the newer version. Anything else leaves the current CLI untouched (logged to

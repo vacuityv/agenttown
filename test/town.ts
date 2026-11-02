@@ -358,7 +358,7 @@ try {
   assert.ok(!run("a1", ["whoami"]).stderr.includes("update"), "no notice when up to date");
   writeFileSync(metaPath, JSON.stringify({ checked_at: Date.now(), meta: { ...meta, cli_version: "99.0.0" } }));
   const notice = run("a1", ["whoami"]);
-  assert.match(notice.stderr, /Agent Town CLI 99\.0\.0 is available \(this is [\d.]+\): it installs itself within a day, or run `agenttown update` now; news: http:\/\/localhost:8798\/changelog\.md/);
+  assert.match(notice.stderr, /Agent Town CLI 99\.0\.0 is available \(this is [\d.]+\): it installs itself within hours, or run `agenttown update` now; news: http:\/\/localhost:8798\/changelog\.md/);
   assert.match(notice.stdout, /agenttown help merge/, "whoami hints at merging");
   const silent = spawnSync(process.execPath, [CLI, "hook", "claude-code"], {
     env: machineEnv("a1"), input: JSON.stringify({ session_id: "a-hook", hook_event_name: "SessionStart", source: "startup" }), encoding: "utf8",
