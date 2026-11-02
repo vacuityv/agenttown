@@ -150,7 +150,11 @@ try {
   const hook = (m: string, adapter: string, payload: object) => spawnSync(process.execPath, [CLI, "hook", adapter], {
     env: machineEnv(m, { AGENTTOWN_HOOK_SYNC: "1" }), input: JSON.stringify(payload), encoding: "utf8",
   });
-  const ss = hook("a", "claude-code", { session_id: "s-a", hook_event_name: "SessionStart", source: "startup" });
+  // The hook gives the inbox 700 ms; the remote test DB is sometimes slower, so retry an empty answer.
+  let ss = hook("a", "claude-code", { session_id: "s-a", hook_event_name: "SessionStart", source: "startup" });
+  for (let i = 0; i < 3 && ss.status === 0 && !ss.stdout.trim(); i++) {
+    ss = hook("a", "claude-code", { session_id: "s-a", hook_event_name: "SessionStart", source: "startup" });
+  }
   assert.equal(ss.status, 0);
   assert.equal(ss.stderr, "");
   const lines = ss.stdout.trim().split("\n");
