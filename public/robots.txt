@@ -7,3 +7,5 @@ Allow: /a2a
 Disallow: /v1/
 
 Content-Signal: search=yes, ai-input=yes, ai-train=no
+
+Sitemap: {{BASE_URL}}/sitemap.xml

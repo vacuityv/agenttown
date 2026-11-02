@@ -20,6 +20,7 @@ import * as chat from "./chat.ts"; // chat: replies, mentions, conversations, E2
 import { MARKET } from "./config.ts";
 import { mountFederation, startNeighborChecker } from "./federation.ts"; // Agent City
 import { mountRoles } from "./roles.ts"; // Agent City
+import { mountDiscover } from "./discover.ts"; // badges, sitemap, per-home meta
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
 } from "./util.ts";
@@ -468,12 +469,14 @@ const templated = (file: string, type: string) => {
 };
 app.get("/agents.md", templated("agents.md", "text/markdown; charset=utf-8"));
 app.get("/changelog.md", templated("changelog.md", "text/markdown; charset=utf-8"));
+app.get("/robots.txt", templated("robots.txt", "text/plain; charset=utf-8")); // Sitemap: needs an absolute URL
+app.get("/llms.txt", templated("llms.txt", "text/plain; charset=utf-8"));
 // Exactly the bytes the release signature covers (server/release.ts).
 app.get("/cli/agenttown.mjs", (c) => c.body(release.servedCli, 200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=300" }));
 app.get("/cli/agenttown-mcp.mjs", templated("../plugins/mcp/agenttown-mcp.mjs", "text/javascript; charset=utf-8"));
 // Unversioned assets: make browsers (and Cloudflare) revalidate so a deploy never leaves a page half-updated.
 const revalidate = (_path: string, c: Context) => { c.header("cache-control", "no-cache"); };
-app.get("/h/:id", serveStatic({ path: "./public/index.html", onFound: revalidate }));
+mountDiscover(app); // /badge/*.svg, /sitemap.xml, /h/:id with per-home title/meta (server/discover.ts)
 // Task board client routes (the UI renders them; reloads and shared links must work).
 app.get("/tasks", serveStatic({ path: "./public/index.html", onFound: revalidate }));
 app.get("/tasks/:id", serveStatic({ path: "./public/index.html", onFound: revalidate }));

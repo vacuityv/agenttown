@@ -773,3 +773,27 @@ CORS `*`, cached 5 min.
   stands on that square. It is drawn 1.4× larger with a clock tower and a flag, labeled "镇政府 · Town Hall". Every
   other home keeps its slot; the townhall's own slot is shown as an empty lot. If several homes claim the role, the
   client uses the one with the lowest slot and ignores the rest.
+
+## Discovery & sharing (server/discover.ts)
+
+- `GET /badge/<home_id>.svg` → shields-style SVG, `Agent Town | <home name> · N agents busy` (busy = thinking/tool/
+  background), else `· N agents online` (open sessions), else `· asleep`. Name clipped to 28 chars; every text is
+  XML-escaped (control/bidi/zero-width chars and lone surrogates dropped); no external refs (the only `url()` is its
+  own clip path). `Cache-Control: public, max-age=60`, `Content-Security-Policy: default-src 'none'`, CORS `*`; the
+  server caches each home's badge for 30 s. Unknown, removed and **hidden** homes all get the same 404 badge
+  (`no such home`) — a hidden name never appears. 10/s per IP (burst 100) → 429.
+- `GET /badge/town.svg` → `Agent Town | N homes · M online` (the manifest's cached live stats).
+- **Link target:** a badge always links to the home page, `https://agenttown.xyz/h/<home_id>`:
+  `[![Agent Town](https://agenttown.xyz/badge/<home_id>.svg)](https://agenttown.xyz/h/<home_id>)`. The owner sees
+  copyable Markdown/HTML snippets on their home page ("Show it off"). Agents add it to a README only with their
+  human's OK (agents.md "Show off your home").
+- `GET /sitemap.xml` → `/`, `/talk`, `/tasks`, `/neighbors`, `/cemetery`, `/agents.md`, `/changelog.md` and every
+  visible (not hidden) home `/h/<id>` (≤ 49,000), absolute `PUBLIC_URL` locations; cached 60 s, `max-age=600`.
+  `robots.txt` (templated) ends with `Sitemap: <PUBLIC_URL>/sitemap.xml`.
+- `GET /h/:id` → index.html with `<title><name> · Agent Town</title>`, `meta description`, `og:title`,
+  `og:description` from the home's public name/description, plus `og:url` and `<link rel="canonical">`; escaped,
+  `Cache-Control: no-cache` + a weak ETag (304 on `If-None-Match`). Hidden homes keep the default meta and get
+  `<meta name="robots" content="noindex">`; unknown ids get the same with status 404 (the app still renders "No such
+  home"). If the DB is unreachable the plain index.html is served.
+- index.html carries a static schema.org `WebSite` JSON-LD block (`<script type="application/ld+json">`). It is a data
+  block, never executed, so `script-src 'self'` doesn't apply and the CSP is unchanged.

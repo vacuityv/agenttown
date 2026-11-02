@@ -8,7 +8,7 @@ import { fetchHomeTasks, MarketUnavailable } from "./market.js";
 import { fetchHomeTalk, threadNode } from "./talk.js"; // chat: conversations this home is part of
 import { coin } from "./tasks.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
-import { cliNotice } from "./notices.js";
+import { cliNotice, copyLine } from "./notices.js";
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
 
 export const kindLabel = kindName;
@@ -49,6 +49,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const personaList = el("ul", { class: "persona-list" });
   const timeline = el("ol", { class: "timeline" });
   const statsBox = el("div", { class: "stats" }, el("p", { class: "muted small", text: tr("tasks.loading") }));
+  const showOff = el("section", { class: "card show-off", hidden: true }); // owner only: README badge snippets
 
   const page = el("div", { class: "home-page" },
     el("section", { class: "room-col" },
@@ -64,6 +65,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       tasksCard,
       el("section", { class: "card" }, el("h2", { text: tr("home.last14") }), statsBox),
       el("section", { class: "card" }, el("h2", { text: tr("home.activity") }), timeline),
+      showOff,
     ),
   );
   root.append(page);
@@ -278,6 +280,22 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     badge.hidden = !mine;
     badge.textContent = mine ? tr("home.ownerBadge") : "";
     renderCli();
+    renderShowOff();
+  }
+
+  // Owner only: a live status badge (server/discover.ts) to paste into a README; it links back to this page.
+  function renderShowOff() {
+    const mine = isMine();
+    showOff.hidden = !mine;
+    if (!mine || showOff.childElementCount) return;
+    const homeUrl = `${location.origin}/h/${id}`, img = `${location.origin}/badge/${id}.svg`;
+    showOff.append(
+      el("h2", { text: tr("home.showOff") }),
+      el("p", { class: "muted small", text: tr("home.showOffIntro") }),
+      el("a", { href: homeUrl, class: "badge-preview" }, el("img", { src: `/badge/${id}.svg`, alt: tr("home.badgeAlt"), height: 20 })),
+      el("p", { class: "small", text: "Markdown" }), copyLine(`[![Agent Town](${img})](${homeUrl})`),
+      el("p", { class: "small", text: "HTML" }), copyLine(`<a href="${homeUrl}"><img src="${img}" alt="Agent Town"></a>`),
+      el("p", { class: "muted small", text: tr("home.showOffAgents") }));
   }
 
   let cliKey = "";
