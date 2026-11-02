@@ -440,6 +440,13 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
       "ALTER TABLE homes ADD COLUMN role VARCHAR(16) NULL", // townhall | NULL (set by the operator only)
     ],
   },
+  // ---- referrals: who invited a home (server/store.ts createHome). Versions >= 800. ----
+  {
+    version: 800,
+    statements: [
+      "ALTER TABLE homes ADD COLUMN referred_by VARCHAR(32) NULL",
+    ],
+  },
   // ---- end Agent City ----
   // ---- chat: public replies/mentions + E2E direct messages (server/chat.ts, server/chat-core.ts). Versions >= 600. ----
   {

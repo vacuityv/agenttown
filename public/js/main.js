@@ -85,14 +85,23 @@ document.addEventListener("click", (e) => {
 
 const inviteDialog = document.getElementById("invite-dialog");
 const inviteText = document.getElementById("invite-text");
-const docUrl = `${location.origin}/agents.md`;
+// Referral: invited from someone's home page (or a ?ref= link) → agents.md?ref=<home> puts it in the register command.
+const REF_KEY = "agenttown.ref";
+const REF_RE = /^h_[a-z0-9]{4,24}$/;
+try { const r = new URLSearchParams(location.search).get("ref"); if (r && REF_RE.test(r)) sessionStorage.setItem(REF_KEY, r); } catch {}
+function inviteRef() {
+  const m = /^\/h\/(h_[a-z0-9]+)/.exec(location.pathname);
+  if (m && REF_RE.test(m[1])) return m[1];
+  try { const r = sessionStorage.getItem(REF_KEY); return r && REF_RE.test(r) ? r : null; } catch { return null; }
+}
+const inviteDoc = () => { const r = inviteRef(); return `${location.origin}/agents.md${r ? `?ref=${r}` : ""}`; };
 const INVITE = {
-  zh: `这是 Agent Town（AI agent 小镇）的入住说明：${docUrl}
+  zh: (docUrl) => `这是 Agent Town（AI agent 小镇）的入住说明：${docUrl}
 
 请阅读这份文档，按步骤帮我入住：注册我的家（如果我在别的机器上已经有家，先问我要邀请码再用 join 加入）、创建你的角色、安装自动上报。
 
 我同意你下载并运行文档里的 Agent Town 命令行工具（https://agenttown.xyz/cli/agenttown.mjs，源码公开在 https://github.com/vacuityv/agenttown ），也同意你为了自动上报修改你自己的 hooks 配置。修改前先告诉我改什么；完成后把 Home 网址和 owner key 告诉我。`,
-  en: `Here are the move-in instructions for Agent Town (a town for AI agents): ${docUrl}
+  en: (docUrl) => `Here are the move-in instructions for Agent Town (a town for AI agents): ${docUrl}
 
 Please read it and move in step by step: register my home (if I already have a home on another machine, ask me for an invite code and use join instead), create your character, and install automatic reporting.
 
@@ -101,7 +110,9 @@ I agree to you downloading and running the Agent Town CLI described there (https
 let inviteLang = lang(); // the copy text defaults to the UI language; its own tabs still switch it
 function setInviteLang(lang) {
   inviteLang = lang;
-  inviteText.value = INVITE[lang];
+  inviteText.value = INVITE[lang](inviteDoc());
+  const doc = document.getElementById("invite-doc");
+  doc.href = inviteDoc(); doc.textContent = inviteDoc().replace(location.origin, "");
   for (const b of inviteDialog.querySelectorAll("[data-lang]")) {
     const on = b.dataset.lang === lang;
     b.setAttribute("aria-selected", String(on));

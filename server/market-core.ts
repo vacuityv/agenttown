@@ -13,7 +13,7 @@ import { ApiError } from "./util.ts";
 export const TASK_STATUSES = ["open", "assigned", "delivered", "completed", "cancelled", "disputed"] as const;
 /** Statuses in which the accepted price sits in escrow. */
 export const HELD = ["assigned", "delivered", "disputed"];
-export const LEDGER_REASONS = ["grant", "escrow", "release", "refund", "payout", "admin"] as const;
+export const LEDGER_REASONS = ["grant", "escrow", "release", "refund", "payout", "admin", "referral"] as const;
 type Reason = (typeof LEDGER_REASONS)[number];
 
 // ---- side effects collected inside a transaction, emitted after commit ----

@@ -139,7 +139,9 @@ api.post("/register", async (c) => {
   if (typeof b.challenge !== "string" || typeof b.nonce !== "string" || !verifyPow(b.challenge, b.nonce, POW_DIFFICULTY)) {
     throw new ApiError(400, "bad_pow", "Invalid, expired or reused proof-of-work.");
   }
-  const home = await store.createHome(sha256hex(b.auth_token), name);
+  // ref: the home that invited this one (agents.md?ref=<home id>); unknown/hidden ones are ignored, never an error.
+  const ref = typeof b.ref === "string" && /^h_[a-z0-9]{4,24}$/.test(b.ref) ? b.ref : null;
+  const home = await store.createHome(sha256hex(b.auth_token), name, ref);
   return c.json({ home, home_url: `${PUBLIC_URL}/h/${home.id}` }, 201);
 });
 
@@ -467,7 +469,16 @@ const templated = (file: string, type: string) => {
   const body = readFileSync(new URL(`../public/${file}`, import.meta.url), "utf8").replaceAll("{{BASE_URL}}", PUBLIC_URL);
   return (c: Context) => c.body(body, 200, { "content-type": type, "cache-control": "public, max-age=300" });
 };
-app.get("/agents.md", templated("agents.md", "text/markdown; charset=utf-8"));
+// agents.md?ref=<home id>: the register command carries the inviting home (both homes get bonus coins).
+const agentsMd = readFileSync(new URL("../public/agents.md", import.meta.url), "utf8").replaceAll("{{BASE_URL}}", PUBLIC_URL);
+app.get("/agents.md", (c) => {
+  const ref = c.req.query("ref");
+  const ok = typeof ref === "string" && /^h_[a-z0-9]{4,24}$/.test(ref);
+  const body = agentsMd
+    .replaceAll("{{REF_FLAG}}", ok ? ` --ref ${ref}` : "")
+    .replaceAll("{{REF_NOTE}}", ok ? `\nYou were invited by home \`${ref}\` ({{BASE_URL}}/h/${ref}): keep \`--ref\` and both homes get ${MARKET.referralBonus} bonus coins.\n`.replaceAll("{{BASE_URL}}", PUBLIC_URL) : "");
+  return c.body(body, 200, { "content-type": "text/markdown; charset=utf-8", "cache-control": "public, max-age=300" });
+});
 app.get("/changelog.md", templated("changelog.md", "text/markdown; charset=utf-8"));
 app.get("/robots.txt", templated("robots.txt", "text/plain; charset=utf-8")); // Sitemap: needs an absolute URL
 app.get("/llms.txt", templated("llms.txt", "text/plain; charset=utf-8"));

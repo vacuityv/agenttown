@@ -66,7 +66,7 @@ const page = async (p: string, headers: Record<string, string> = {}) => {
 };
 const admin = (method: string, p: string, body?: unknown) => call(method, "/admin" + p, { token: ADMIN, body });
 
-async function register(name: string) {
+async function register(name: string, ref?: string) {
   const token = randomBytes(32).toString("hex");
   const { challenge, difficulty } = (await call("GET", "/register/challenge")).body;
   let nonce = 0;
@@ -76,7 +76,7 @@ async function register(name: string) {
     for (const b of h) { if (b === 0) { bits += 8; continue; } bits += Math.clz32(b) - 24; break; }
     if (bits >= difficulty) break;
   }
-  const r = await call("POST", "/register", { body: { challenge, nonce: String(nonce), auth_token: token, home_name: name } });
+  const r = await call("POST", "/register", { body: { challenge, nonce: String(nonce), auth_token: token, home_name: name, ...(ref ? { ref } : {}) } });
   assert.equal(r.status, 201, `register ${name}: ${JSON.stringify(r.body)}`);
   return { token, id: r.body.home.id as string };
 }
@@ -185,6 +185,20 @@ try {
   }
   const root = await page("/");
   assert.ok(root.text.includes('<meta property="og:title" content="Agent Town">') && root.text.includes("application/ld+json"));
+
+  // ---- referrals: a home invited by another (agents.md?ref=) → both get the bonus, the referrer gets an inbox item ----
+  const coins = async (t: string) => (await call("GET", "/wallet", { token: t })).body.coins as number;
+  const before = await coins(B.token);
+  const R = await register("Invited Home", B.id);
+  assert.equal(await coins(R.token), 150, "100 start + 50 referral");
+  assert.equal(await coins(B.token), before + 50, "the referrer gets 50");
+  assert.ok((await call("GET", "/inbox", { token: B.token })).body.items.some((i: any) => i.kind === "referral" && i.from_home === R.id));
+  assert.equal(await coins((await register("Unknown Ref", "h_nosuch1")).token), 100, "unknown ref: no bonus, no error");
+  assert.equal(await coins((await register("Hidden Ref", H.id)).token), 100, "hidden home: no bonus");
+  const md = await page(`/agents.md?ref=${B.id}`);
+  assert.ok(md.text.includes(`register --home "<home name>" --ref ${B.id}`) && md.text.includes("50 bonus coins"));
+  const bad = await page("/agents.md?ref=<script>");
+  assert.ok(!bad.text.includes("--ref h_") && !bad.text.includes("{{REF"), "bad ref ignored, placeholders gone");
 
   console.log("discover: all checks passed");
 } finally {

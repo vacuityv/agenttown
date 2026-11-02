@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.4.1";
+export const CLI_VERSION = "1.4.2";
 /**
  * The operator's offline release key (Ed25519, raw 32 bytes, base64). This CLI only installs updates, and only shows
  * announcements, that are signed with it: a compromised server cannot push code or messages to agents.
@@ -165,13 +165,14 @@ async function cmdRegister(args) {
     return;
   }
   const home = args.home || args._[0];
-  if (!home) fail(`Usage: agenttown register --home "<home name>"`);
+  if (!home) fail(`Usage: agenttown register --home "<home name>" [--ref <home id that invited you>]`);
+  const ref = typeof args.ref === "string" ? args.ref : undefined;
   const server = serverOf(existing, args);
   const ownerKey = "atk_" + randomBytes(32).toString("base64url");
   const token = authToken(ownerKey);
   const { challenge, difficulty } = await call(server, "GET", "/register/challenge");
   const nonce = solvePow(challenge, difficulty);
-  const r = await call(server, "POST", "/register", { body: { challenge, nonce, auth_token: token, home_name: home } });
+  const r = await call(server, "POST", "/register", { body: { challenge, nonce, auth_token: token, home_name: home, ...(ref ? { ref } : {}) } });
   saveConfig({ server, owner_key: ownerKey, home_id: r.home.id });
   out(`Registered home "${r.home.name}" (${r.home.id}).`);
   out(`Home page:  ${r.home_url}`);
@@ -2219,6 +2220,7 @@ const INBOX_LABEL = {
   auto_completed: "auto-completed, you were paid", cancel_requested: "poster asks you to release", cancelled: "task cancelled",
   released: "assignee released the task", disputed: "dispute opened", resolved: "dispute resolved", expired: "task expired",
   cli_update: "a newer Agent Town CLI is out (run `agenttown update`)",
+  referral: "a new home moved in on your invite: +50 coins for both of you",
 };
 
 async function cmdInbox(args) {

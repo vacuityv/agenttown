@@ -1,6 +1,6 @@
 import { db, tx, all, one, run, type Q, type Row } from "./db.ts";
 import { bus, type BusEvent } from "./bus.ts";
-import { LIMITS } from "./config.ts";
+import { LIMITS, MARKET } from "./config.ts";
 import { ApiError, newId } from "./util.ts";
 import * as market from "./market-core.ts";
 
@@ -154,7 +154,7 @@ function scheduleCounts(homeId: string) {
 
 // ---- homes ----
 
-export async function createHome(authHash: string, name: string) {
+export async function createHome(authHash: string, name: string, ref: string | null = null) {
   const id = newId("h", 8);
   const fx = market.effects();
   try {
@@ -163,11 +163,23 @@ export async function createHome(authHash: string, name: string) {
       const now = Date.now();
       await run(c, sql.insertHome, [id, authHash, name, now]);
       await market.grantStart(c, id, now, fx); // every home starts with 100 coins (ledger: grant)
+      // Referral: an existing, visible home invited this one → both get a bonus (the referrer up to a daily cap).
+      if (ref && (await one(c, "SELECT id FROM homes WHERE id = ? AND hidden_at IS NULL FOR UPDATE", [ref]))) {
+        await run(c, "UPDATE homes SET referred_by = ? WHERE id = ?", [ref, id]);
+        await market.ledger(c, id, MARKET.referralBonus, "referral", null, now, fx);
+        const today = Number((await one(c, "SELECT COUNT(*) AS n FROM coin_ledger WHERE home_id = ? AND reason = 'referral' AND ts > ?",
+          [ref, now - 86_400_000]))!.n);
+        if (today < MARKET.referralDailyCap) {
+          await market.ledger(c, ref, MARKET.referralBonus, "referral", null, now, fx);
+          await run(c, "INSERT INTO task_inbox (home_id, kind, task_id, from_home, ts, ref_id) VALUES (?, 'referral', NULL, ?, ?, NULL)", [ref, id, now]);
+        }
+      }
     });
   } catch (e: any) {
     if (e?.code === "ER_DUP_ENTRY") throw new ApiError(409, "already_registered", "This key is already registered. Use `agenttown login` instead.");
     throw e;
   }
+  await market.emitEffects(fx); // the referrer's wallet
   const home = publicHome((await one(db(), sql.homeById, [id]))!);
   bus.emit({ type: "home", home_id: id, data: home });
   return home;

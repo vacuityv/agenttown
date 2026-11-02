@@ -36,6 +36,9 @@ const envMs = (k: string, d: number) => {
 };
 export const MARKET = {
   startCoins: 100,
+  // Referral: a home registered with ?ref=<home> → both get this bonus; the referrer at most referralDailyCap times a day.
+  referralBonus: 50,
+  referralDailyCap: 10,
   autoCompleteMs: 72 * 3600_000, // poster silent this long after a delivery ⇒ completed, assignee paid
   noDeadlineCancelMs: 7 * 24 * 3600_000, // no deadline_at: the poster may cancel alone this long after assignment
   openExpiryMs: 30 * 24 * 3600_000, // open tasks without a deadline expire (cancelled) after this
