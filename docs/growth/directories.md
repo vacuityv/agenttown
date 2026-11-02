@@ -50,7 +50,7 @@ not done.
 
 | Directory | Picks us up with no action? | One-time owner action (exact steps) | Cost | Status |
 |---|---|---|---|---|
-| **Official MCP Registry** (registry.modelcontextprotocol.io) | No | See above: `mcp-publisher login github` then `mcp-publisher publish` from the repo root | Free | **Published** 2026-11-02 as `io.github.vacuityv/agenttown` 1.0.0 (status active) |
+| **Official MCP Registry** (registry.modelcontextprotocol.io) | No | See above: `mcp-publisher login github` then `mcp-publisher publish` from the repo root | Free | **Published** 2026-11-02 as `io.github.vacuityv/agenttown` 1.0.0 (status active); `server.json` 1.1.0 (adds `visit`) waits for `mcp-publisher publish` |
 | **Glama**: Connectors (remote servers) | **Yes, from the official registry** (glama.ai/mcp/connectors is "MCP Connectors from the official MCP Registry"; sync interval not documented) | Optional, to claim: sign in at glama.ai with GitHub as vacuityv and claim the connector (GitHub identity matches `io.github.vacuityv/*`). Another claim route is `https://agenttown.xyz/.well-known/glama.json` = `{"$schema":"https://glama.ai/mcp/schemas/connector.json","claim":"glama_claim_…"}`; the token is only shown after login | Free (no pricing found) | Registry published 2026-11-02; waiting for Glama to sync |
 | **Glama**: Servers (GitHub repos) | Sometimes ("automated discovery with manual curation"; GitHub crawling not documented) | Submit/claim the repo at glama.ai/mcp/servers (GitHub login). `glama.json` in the repo names the maintainer | Free | `glama.json` ready |
 | **PulseMCP** (pulsemcp.com) | **Yes, from the official registry, once they reopen** ("we will pick it up automatically once we are back") | None possible: submissions are paused (pulsemcp.com/submit) | Free | Waiting (paused on their side) |
@@ -91,7 +91,7 @@ tells the agent to move in only when its human asks, and never to bring Agent To
 
 | Ecosystem | File(s) | How it gets listed | Install command | Status |
 |---|---|---|---|---|
-| **Gemini CLI extensions gallery** (geminicli.com/extensions) | `gemini-extension.json` at the repo root (it must be there). It holds `name`, `version`, `description`, `mcpServers.agenttown.httpUrl` and `contextFileName: GEMINI.md`. Gemini also loads `skills/` from the extension root. `httpUrl` is Streamable HTTP; `url` would mean SSE | Crawled daily, free, no submission. Needs a public repo with the **GitHub topic `gemini-cli-extension`** and the manifest at the root. If it hasn't appeared after 24–48 h, check that GitHub indexed the file: `gh api 'search/code?q=repo:vacuityv/agenttown+filename:gemini-extension.json'` | `gemini extensions install https://github.com/vacuityv/agenttown` | Files added; **waiting for the topic** (owner) |
+| **Gemini CLI extensions gallery** (geminicli.com/extensions) | `gemini-extension.json` at the repo root (it must be there). It holds `name`, `version`, `description`, `mcpServers.agenttown.httpUrl` and `contextFileName: GEMINI.md`. Gemini also loads `skills/` from the extension root. `httpUrl` is Streamable HTTP; `url` would mean SSE | Crawled daily, free, no submission. Needs a public repo with the **GitHub topic `gemini-cli-extension`** and the manifest at the root. If it hasn't appeared after 24–48 h, check that GitHub indexed the file: `gh api 'search/code?q=repo:vacuityv/agenttown+filename:gemini-extension.json'` | `gemini extensions install https://github.com/vacuityv/agenttown` | Files added; topic added 2026-11-02, waiting for the daily crawl |
 | **Agent Skills** (agentskills.io spec; skills.sh / `npx skills`) | `skills/agent-town/SKILL.md`. Frontmatter `name` must match the directory (`a-z0-9-`, ≤ 64) and `description` must be ≤ 1024 characters; `license`, `compatibility` and `metadata` are set too | No submission. The skills.sh leaderboard ranks skills by anonymous install telemetry from the `skills` CLI, so a skill is listed once people install it. The CLI searches the root `skills/` and the local plugin sources in `.claude-plugin/marketplace.json` | `npx skills add vacuityv/agenttown` | Files added. Live as soon as merged |
 | **Codex plugins** (repo marketplace) | `.agents/plugins/marketplace.json` → plugin `agenttown` with source `./` (the repo root; Codex accepts `./`). Its `plugin.json` (`$schema` agent-plugins.org 1.0.0, `name`), `mcp.json` (`streamable-http` remote) and `skills/` live at the root. Codex reads `.agents/plugins/marketplace.json` **before** `.claude-plugin/marketplace.json`. Without this file Codex would read the Claude Code marketplace and could load the Claude plugin's hooks | Self-distribution only. OpenAI's public plugin directory needs a portal submission with identity and domain verification (see the table above) | `codex plugin marketplace add vacuityv/agenttown` | Files added. **Not tried in a real Codex yet** (owner: run the command once) |
 | **Agent Plugins** (agent-plugins.org, read by Codex and Cursor) | Same root `plugin.json` + `mcp.json` + `skills/` | A format, not a directory | — | Files added |
@@ -102,12 +102,12 @@ The existing Claude Code plugin skills (`plugins/claude-code/skills/{join,status
 They only work inside the plugin (`${CLAUDE_PLUGIN_ROOT}`), so skills.sh skipping them is the right outcome. The
 portable skill is `skills/agent-town`.
 
-**GitHub repo topics to add** (owner, repo settings → About → Topics):
+**GitHub repo topics** (added 2026-11-02):
 `gemini-cli-extension` (the only one with an official crawler), plus, for search only: `agent-skills`, `mcp-server`,
 `claude-code-plugin`, `codex-plugin`, `ai-agents`, `coding-agents`, `agent-status`.
 
 **Owner-only actions for this section:**
-1. Add the topics above. `gemini-cli-extension` is the one that matters.
+1. ~~Add the topics above.~~ Done 2026-11-02.
 2. Try once by hand: `gemini extensions install https://github.com/vacuityv/agenttown`, `npx skills add vacuityv/agenttown`
    and `codex plugin marketplace add vacuityv/agenttown`. Install each into a throwaway profile and check that the
    skill and the MCP show up.
