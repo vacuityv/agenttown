@@ -2,7 +2,7 @@
 //   node --disable-warning=ExperimentalWarning test/adapters.ts
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { mapHookEvent, NORMALIZE } from "../public/cli/agenttown.mjs";
@@ -142,5 +142,107 @@ assert.ok(!existsSync(join(home, FILES.copilot)));
 assert.equal(readFileSync(join(home, ".hermes", "config.yaml"), "utf8"), "model: hermes-4\n", "Hermes config restored");
 assert.ok(existsSync(join(home, "Documents/Cline/Hooks/TaskError")), "user's Cline hook kept on uninstall");
 for (const f of Object.values(FILES)) if (existsSync(join(home, f))) assert.ok(!readFileSync(join(home, f), "utf8").includes("agenttown.mjs"), `${f} cleaned`);
+
+// ---- detection, install --all / --dry-run, status, the once-only SessionStart hint (own HOME and PATH) ----
+const h2 = mkdtempSync(join(tmpdir(), "agenttown-detect-"));
+const bin = join(h2, "bin");
+const at = (...p: string[]) => join(h2, ...p);
+const put = (f: string, text: string) => { mkdirSync(join(at(f), ".."), { recursive: true }); writeFileSync(at(f), text); };
+const writeCfg = (extra: object = {}) =>
+  put(".agenttown/config.json", JSON.stringify({ server: "http://127.0.0.1:9", home_id: "h_det", owner_key: "atk_" + "1".repeat(32), ...extra }));
+writeCfg();
+mkdirSync(bin);
+put("bin/opencode", "#!/bin/sh\n"); // a binary on PATH, no config dir yet
+put(".codex/auth.json", "{}");
+put(".gemini/tmp/x", "");
+put(".cursor/argv.json", "{}");
+put("Documents/Cline/Hooks/TaskError", "#!/bin/sh\necho mine\n"); // the human's own Cline hook
+put(".hermes/config.yaml", "model: m\nhooks:\n  on_session_start: []\n"); // Hermes refuses: hooks: exists
+put(".claude/plugins/installed_plugins.json", JSON.stringify({ plugins: { "agenttown@agenttown": [{}] } })); // plugin reports Claude Code
+const dEnv = { HOME: h2, PATH: bin, XDG_CONFIG_HOME: "", CRUSH_GLOBAL_CONFIG: "", HERMES_HOME: "", CLAUDE_CONFIG_DIR: "", CODEX_HOME: "",
+  GEMINI_CLI_HOME: "", QWEN_HOME: "", COPILOT_HOME: "", WORKBUDDY_CONFIG_DIR: "", KIMI_CODE_HOME: "", CLINE_DIR: "" };
+const run2 = (...args: string[]) => {
+  const r = spawnSync(process.execPath, [CLI, ...args], { env: dEnv, encoding: "utf8" });
+  assert.equal(r.status, 0, `${args.join(" ")}: ${r.stderr}`);
+  return r.stdout;
+};
+const sessionStart = () => {
+  const t0 = Date.now();
+  const r = spawnSync(process.execPath, [CLI, "hook", "claude-code"], {
+    env: dEnv, input: JSON.stringify({ session_id: "d1", hook_event_name: "SessionStart", source: "startup" }), encoding: "utf8",
+  });
+  assert.equal(r.status, 0);
+  assert.equal(r.stderr, "");
+  assert.ok(Date.now() - t0 < 1500, "SessionStart stays fast");
+  return r.stdout ? JSON.parse(r.stdout).hookSpecificOutput.additionalContext as string : "";
+};
+const st = () => JSON.parse(run2("status", "--json"));
+let s0 = st();
+assert.deepEqual(s0.also_installed, ["codex", "gemini", "cursor", "cline", "opencode", "hermes"], "detected, not hooked");
+assert.deepEqual(s0.reporting, ["claude-code"], "the agenttown plugin counts as reporting");
+assert.match(run2("status"), /Also on this machine: Codex, Gemini CLI, Cursor, Cline, OpenCode, Hermes Agent\. `agenttown install --all`/);
+// a lone ~/.gemini (e.g. Antigravity's) is not Gemini CLI
+const h3 = mkdtempSync(join(tmpdir(), "agenttown-detect3-"));
+mkdirSync(join(h3, ".gemini", "antigravity"), { recursive: true });
+mkdirSync(join(h3, ".codex"));
+writeFileSync(join(h3, ".codex", "config.toml"), `notify = ["node", "/Users/me/.agenttown/agenttown.mjs", "hook", "codex"]\n`); // set up by hand
+const s3 = JSON.parse(spawnSync(process.execPath, [CLI, "status", "--json"], { env: { ...dEnv, HOME: h3, PATH: join(h3, "bin") }, encoding: "utf8" }).stdout);
+assert.deepEqual([s3.registered, s3.also_installed, s3.reporting], [false, [], ["codex"]], "Antigravity's ~/.gemini ignored; hand-made Codex notify counts");
+
+// --dry-run changes nothing
+const dry = run2("install", "--all", "--dry-run");
+assert.match(dry, /Would install Agent Town hooks for 6 agents/);
+assert.match(dry, /Codex \(codex\) as persona "Codex"/);
+assert.match(dry, /Already reporting: Claude Code\./);
+assert.ok(!existsSync(at(".codex/config.toml")) && !existsSync(at(".claude/settings.json")) && !existsSync(at(".agenttown/agenttown.mjs")), "dry run wrote nothing");
+
+// SessionStart: one informational line, once per newly found set
+const hint = sessionStart();
+assert.equal(hint, "Agent Town (informational): also installed here but not in town: Codex, Gemini CLI, Cursor, Cline, OpenCode, Hermes Agent — " +
+  "`agenttown install --all` adds them (ask your human first).");
+assert.equal(sessionStart(), "", "shown once");
+assert.ok(!existsSync(at(".codex/config.toml")), "the hint never installs anything");
+
+// --all hooks every one of them; Hermes refuses as before, Cline leaves the human's file alone, no Claude hooks next to the plugin
+const all = run2("install", "--all");
+assert.match(all, /\+ Codex \(codex\) as "Codex": hooks in /);
+assert.match(all, /- Hermes Agent \(hermes\) skipped: .*already has a "hooks:" section/);
+assert.match(all, /Installed 5 of 6: Codex, Gemini CLI, Cursor, Cline, OpenCode\. Skipped \(nothing changed\): Hermes Agent\. Already reporting: Claude Code\./);
+assert.ok(readFileSync(at(".codex/config.toml"), "utf8").includes("hook codex"));
+assert.ok(readFileSync(at(".gemini/settings.json"), "utf8").includes("hook gemini"));
+assert.ok(existsSync(at(".config/opencode/plugins/agenttown.js")));
+assert.ok(existsSync(at(".agenttown/agenttown.mjs")), "the CLI copy the hooks call");
+assert.equal(readFileSync(at("Documents/Cline/Hooks/TaskError"), "utf8"), "#!/bin/sh\necho mine\n");
+assert.equal(readFileSync(at(".hermes/config.yaml"), "utf8"), "model: m\nhooks:\n  on_session_start: []\n");
+assert.ok(!existsSync(at(".claude/settings.json")), "no settings.json hooks next to the plugin");
+// idempotent: a second run changes no file and installs nothing twice
+const snap = () => [".codex/config.toml", ".gemini/settings.json", ".cursor/hooks.json", "Documents/Cline/Hooks/PreToolUse",
+  ".config/opencode/plugins/agenttown.js"].map((f) => readFileSync(at(f), "utf8"));
+const before = snap();
+assert.match(run2("install", "--all"), /Installed 0 of 1\. Skipped \(nothing changed\): Hermes Agent\. Already reporting: Claude Code, Codex, Gemini CLI, Cursor, Cline, OpenCode\./);
+assert.deepEqual(snap(), before);
+assert.deepEqual(st().also_installed, ["hermes"]);
+assert.equal(sessionStart(), "", "Hermes was shown already");
+// a newly installed agent → one more line (the whole current set), then quiet again
+mkdirSync(at(".kiro"));
+assert.equal(sessionStart(), "Agent Town (informational): also installed here but not in town: Kiro, Hermes Agent — " +
+  "`agenttown install --all` adds them (ask your human first).");
+assert.equal(sessionStart(), "");
+// opt-outs: "host_hints": false, and "notify": false (all SessionStart lines)
+mkdirSync(at(".factory"));
+writeCfg({ host_hints: false });
+assert.equal(sessionStart(), "", "host_hints:false");
+writeCfg({ notify: false });
+assert.equal(sessionStart(), "", "notify:false");
+writeCfg();
+// a host never hints at itself: Droid's own SessionStart has nothing new to say
+const droidSelf = spawnSync(process.execPath, [CLI, "hook", "droid"], {
+  env: dEnv, input: JSON.stringify({ session_id: "d2", hook_event_name: "SessionStart", source: "startup" }), encoding: "utf8",
+});
+assert.deepEqual([droidSelf.status, droidSelf.stdout], [0, ""]);
+assert.match(sessionStart(), /not in town: Factory Droid, Kiro, Hermes Agent —/, "back on: the not-yet-shown Droid brings the line back");
+// --all with everything found already reporting
+for (const d of [".hermes", ".kiro", ".factory"]) rmSync(at(d), { recursive: true, force: true });
+assert.match(run2("install", "--all"), /Every supported agent found on this machine already reports to Agent Town: Claude Code, Codex, Gemini CLI, Cursor, Cline, OpenCode\. Nothing to do\./);
 
 console.log("adapters: all checks passed");

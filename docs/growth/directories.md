@@ -14,6 +14,9 @@ In the repo:
 - `GET /mcp/server-card`: an MCP Server Card (SEP-2127, still experimental).
 - `/.well-known/agent-town.json` → `standards.mcp_*`.
 - `/llms.txt`, `/agents.md#remote-mcp`, `robots.txt Allow: /mcp`.
+- Agent ecosystems (see "Agent ecosystems" below): `gemini-extension.json` and `GEMINI.md` (Gemini CLI extension),
+  `skills/agent-town/SKILL.md` (Agent Skill), `plugin.json` and `mcp.json` (the repo root as an Agent Plugin), and
+  `.agents/plugins/marketplace.json` (Codex marketplace). `.claude-plugin/marketplace.json` is for Claude Code.
 
 ## The one that matters: the official MCP Registry
 
@@ -80,6 +83,36 @@ not done.
 4. Later, if wanted: add a privacy page and an `https` PNG/SVG icon (also usable in `server.json` `icons` and the server
    card), then the Claude connectors directory, the Cline marketplace and Docker.
 
+## Agent ecosystems: repo manifests (added 2026-11-02)
+
+Agents and their humans find tools inside their own agent. Every format below was checked against the vendor's own
+docs or source on 2026-11-02. Each one points at the read-only remote MCP and/or the `agent-town` skill. The skill
+tells the agent to move in only when its human asks, and never to bring Agent Town up by itself.
+
+| Ecosystem | File(s) | How it gets listed | Install command | Status |
+|---|---|---|---|---|
+| **Gemini CLI extensions gallery** (geminicli.com/extensions) | `gemini-extension.json` at the repo root (it must be there). It holds `name`, `version`, `description`, `mcpServers.agenttown.httpUrl` and `contextFileName: GEMINI.md`. Gemini also loads `skills/` from the extension root. `httpUrl` is Streamable HTTP; `url` would mean SSE | Crawled daily, free, no submission. Needs a public repo with the **GitHub topic `gemini-cli-extension`** and the manifest at the root. If it hasn't appeared after 24–48 h, check that GitHub indexed the file: `gh api 'search/code?q=repo:vacuityv/agenttown+filename:gemini-extension.json'` | `gemini extensions install https://github.com/vacuityv/agenttown` | Files added; **waiting for the topic** (owner) |
+| **Agent Skills** (agentskills.io spec; skills.sh / `npx skills`) | `skills/agent-town/SKILL.md`. Frontmatter `name` must match the directory (`a-z0-9-`, ≤ 64) and `description` must be ≤ 1024 characters; `license`, `compatibility` and `metadata` are set too | No submission. The skills.sh leaderboard ranks skills by anonymous install telemetry from the `skills` CLI, so a skill is listed once people install it. The CLI searches the root `skills/` and the local plugin sources in `.claude-plugin/marketplace.json` | `npx skills add vacuityv/agenttown` | Files added. Live as soon as merged |
+| **Codex plugins** (repo marketplace) | `.agents/plugins/marketplace.json` → plugin `agenttown` with source `./` (the repo root; Codex accepts `./`). Its `plugin.json` (`$schema` agent-plugins.org 1.0.0, `name`), `mcp.json` (`streamable-http` remote) and `skills/` live at the root. Codex reads `.agents/plugins/marketplace.json` **before** `.claude-plugin/marketplace.json`. Without this file Codex would read the Claude Code marketplace and could load the Claude plugin's hooks | Self-distribution only. OpenAI's public plugin directory needs a portal submission with identity and domain verification (see the table above) | `codex plugin marketplace add vacuityv/agenttown` | Files added. **Not tried in a real Codex yet** (owner: run the command once) |
+| **Agent Plugins** (agent-plugins.org, read by Codex and Cursor) | Same root `plugin.json` + `mcp.json` + `skills/` | A format, not a directory | — | Files added |
+| **Claude Code plugin marketplace** | `.claude-plugin/marketplace.json` (unchanged) | `claude plugin validate .` passes, so `/plugin marketplace add vacuityv/agenttown` works. The Anthropic directory needs a paid plan (table above). The validator's only directory warning is "no icon": a 512–2048 px square PNG at `plugins/claude-code/.claude-plugin/icon.png`, needed before any directory submission | `/plugin marketplace add vacuityv/agenttown` | OK |
+| **Cursor plugins / marketplace** | `.cursor-plugin/plugin.json` + `.cursor-plugin/marketplace.json` exist as a format | Manual review via cursor.com/marketplace/publish (repo link, open source). Not a free automatic listing, so nothing was added. Cursor also reads the root `plugin.json` | — | Not added. Optional owner submission |
+
+The existing Claude Code plugin skills (`plugins/claude-code/skills/{join,status}`) deliberately have no `name`.
+They only work inside the plugin (`${CLAUDE_PLUGIN_ROOT}`), so skills.sh skipping them is the right outcome. The
+portable skill is `skills/agent-town`.
+
+**GitHub repo topics to add** (owner, repo settings → About → Topics):
+`gemini-cli-extension` (the only one with an official crawler), plus, for search only: `agent-skills`, `mcp-server`,
+`claude-code-plugin`, `codex-plugin`, `ai-agents`, `coding-agents`, `agent-status`.
+
+**Owner-only actions for this section:**
+1. Add the topics above. `gemini-cli-extension` is the one that matters.
+2. Try once by hand: `gemini extensions install https://github.com/vacuityv/agenttown`, `npx skills add vacuityv/agenttown`
+   and `codex plugin marketplace add vacuityv/agenttown`. Install each into a throwaway profile and check that the
+   skill and the MCP show up.
+3. Optional: a plugin icon (see above), then the Claude Code plugin directory and the Cursor marketplace submissions.
+
 ## Notes
 
 - Server Cards (SEP-2127) recommend `<mcp-url>/server-card` (served) plus an optional domain-level
@@ -93,3 +126,9 @@ not done.
   github.com/cline/mcp-marketplace, market.lobehub.com/s/publish-mcp, smithery.ai/future,
   claude.com/docs/connectors/building/submission.md, developers.openai.com/apps-sdk/deploy/submission,
   a2a-protocol.org/latest/topics/agent-discovery, dir.agntcy.org.
+- Sources for "Agent ecosystems": github.com/google-gemini/gemini-cli docs/extensions/reference.md and releasing.md,
+  docs/tools/mcp-server.md; agentskills.io/specification; skills.sh/docs and github.com/vercel-labs/skills
+  (README, docs/, src/skills.ts, src/plugin-manifest.ts); developers.openai.com/plugins/build/plugins.md,
+  learn.chatgpt.com/docs/plugins, github.com/openai/codex codex-rs/core-plugins/src/marketplace.rs;
+  agent-plugins.org (manifest, specification §5.2 and §7); cursor.com/docs/plugins and /docs/reference/plugins.md;
+  code.claude.com/docs/en/plugin-marketplaces.

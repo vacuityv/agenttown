@@ -25,7 +25,9 @@ await new Promise<void>((ok, fail) => {
 
 const cfgDir = join(dir, "home");
 const cfgPath = join(cfgDir, "config.json");
-const cliEnv = { ...env, AGENTTOWN_CONFIG: cfgPath, AGENTTOWN_SERVER: BASE };
+// The CLI looks for other agents under HOME and on PATH (SessionStart hint): give it an empty machine, never the real one.
+const noHosts = { HOME: join(dir, "empty-home"), PATH: join(dir, "no-bin") };
+const cliEnv = { ...env, ...noHosts, AGENTTOWN_CONFIG: cfgPath, AGENTTOWN_SERVER: BASE };
 const get = async (p: string) => (await fetch(BASE + p)).json() as Promise<any>;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -291,7 +293,7 @@ async function releaseChecks(cfg: any) {
     const copy = join(d, "agenttown.mjs");
     writeFileSync(copy, variant(cli.CLI_VERSION, pub).replaceAll("{{BASE_URL}}", B));
     chmodSync(copy, 0o755);
-    return { d, copy, env: { ...env, AGENTTOWN_CONFIG: join(d, "config.json"), AGENTTOWN_SERVER: B } };
+    return { d, copy, env: { ...env, ...noHosts, AGENTTOWN_CONFIG: join(d, "config.json"), AGENTTOWN_SERVER: B } };
   };
   const run = (m: { copy: string; env: object }, args: string[], input = "") =>
     spawnSync(process.execPath, [m.copy, ...args], { env: m.env as any, input, encoding: "utf8" });
