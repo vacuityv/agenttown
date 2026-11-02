@@ -131,6 +131,20 @@ export function noteClient(c: Context, auth: { home: Record<string, any>; device
     ? run(db(), "UPDATE devices SET cli_version = ?, cli_seen_at = ? WHERE id = ?", [v, now, auth.device_id])
     : run(db(), "UPDATE homes SET cli_version = ?, cli_seen_at = ? WHERE id = ?", [v, now, auth.home.id]);
   q.catch((e) => console.error("cli telemetry write failed", e?.message));
+  if (!selfUpdates(v)) nudgeUpdate(auth.home.id);
+}
+
+// CLIs before 1.2.0 cannot update themselves, and the only thing they surface on their own is the SessionStart line
+// built from inbox COUNTS. So such a home gets one unread "cli_update" inbox item per release: its agent sees
+// "1 task update waiting — run `agenttown inbox`", and `inbox` (an interactive command) prints the CLI's own
+// "update available: run `agenttown update`" line. No server-written text reaches the agent.
+const selfUpdates = (v: string) => v !== "old" && !newer("1.2.0", v);
+function nudgeUpdate(homeId: string) {
+  if (!cliVersion) return;
+  run(db(), `INSERT INTO task_inbox (home_id, kind, task_id, from_home, ts, ref_id)
+    SELECT ?, 'cli_update', NULL, NULL, ?, ? FROM DUAL
+    WHERE NOT EXISTS (SELECT 1 FROM task_inbox WHERE home_id = ? AND kind = 'cli_update' AND ref_id = ?)`,
+    [homeId, Date.now(), cliVersion, homeId, cliVersion]).catch((e) => console.error("cli update nudge failed", e?.message));
 }
 
 const ACTIVE_MS = 14 * 86_400_000;

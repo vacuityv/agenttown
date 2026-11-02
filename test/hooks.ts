@@ -320,6 +320,12 @@ async function releaseChecks(cfg: any) {
   await sleep(200);
   let m0 = await me();
   assert.deepEqual([m0.cli.version, m0.cli.latest, m0.cli.outdated], ["old", NEXT, true]);
+  // ...and a CLI that cannot update itself gets ONE unread "cli_update" inbox item per release (counts reach SessionStart).
+  await me("agenttown-cli/1.1.2");
+  await sleep(200);
+  const inb = await (await fetch(`${B}/v1/inbox`, { headers: { authorization: `Bearer ${ownerToken}` } })).json() as any;
+  assert.equal(inb.items.filter((i: any) => i.kind === "cli_update").length, 1, "one update nudge per release");
+  assert.ok(inb.counts.total >= 1 && inb.counts.updates >= 1, "the nudge counts as an update");
 
   // Happy path: a hook's detached flusher refreshes /v1/meta and installs the signed newer CLI. Silent.
   const u1 = machine("u1");
