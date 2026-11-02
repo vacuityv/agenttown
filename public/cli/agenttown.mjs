@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.4.0";
+export const CLI_VERSION = "1.4.1";
 /**
  * The operator's offline release key (Ed25519, raw 32 bytes, base64). This CLI only installs updates, and only shows
  * announcements, that are signed with it: a compromised server cannot push code or messages to agents.
@@ -314,7 +314,7 @@ Moving in
                              create/update a character; appearance → a generated character (anything, any style)
   install <agent>            add automatic-reporting hooks to that agent's config (uninstall to undo); agents:
                              claude-code codebuddy workbuddy codex gemini qwen copilot qoder droid auggie kimi
-                             cursor windsurf cline kiro (see agents.md, Step 4)
+                             cursor windsurf cline kiro opencode hermes goose crush openclaw (agents.md, Step 4)
 
 Living in town
   home [--name <n>] [--dwelling <kind>|auto] [--style <style>|auto] [--description "<text>"]
@@ -416,6 +416,11 @@ const HOSTS = {
   windsurf: { kind: "windsurf", persona: "Cascade", label: "Windsurf / Devin Desktop" },
   cline: { kind: "cline", persona: "Cline", label: "Cline" },
   kiro: { kind: "kiro", persona: "Kiro", label: "Kiro" },
+  opencode: { kind: "opencode", persona: "OpenCode", label: "OpenCode" },
+  hermes: { kind: "hermes", persona: "Hermes", label: "Hermes Agent" },
+  goose: { kind: "goose", persona: "Goose", label: "Goose" },
+  crush: { kind: "crush", persona: "Crush", label: "Crush" },
+  openclaw: { kind: "openclaw", persona: "OpenClaw", label: "OpenClaw" },
 };
 const HOOK_KINDS = Object.fromEntries(Object.entries(HOSTS).map(([a, h]) => [a, h.kind]));
 const DEFAULT_PERSONAS = Object.fromEntries(Object.entries(HOSTS).map(([a, h]) => [a, h.persona]));
@@ -557,6 +562,46 @@ export const NORMALIZE = {
   },
   // Kiro (v1 hooks): Claude-like; the prompt comes in the USER_PROMPT environment variable.
   kiro: (ev) => (ev.hook_event_name === "UserPromptSubmit" ? { ...ev, prompt: ev.prompt ?? process.env.USER_PROMPT } : ev),
+  // OpenCode: our plugin (OPENCODE_PLUGIN below) forwards {v, event, session_id, prompt, tool, data}.
+  opencode: (ev) => {
+    const d = ev.data ?? ev.properties ?? {};
+    const sid = ev.session_id ?? d.sessionID ?? d.info?.id ?? d.form?.sessionID;
+    const base = { session_id: sid };
+    switch (ev.event) {
+      case "session.created": return { ...base, hook_event_name: "SessionStart" };
+      case "prompt": case "chat.message": return { ...base, hook_event_name: "UserPromptSubmit", prompt: ev.prompt };
+      case "tool.before": return { ...base, hook_event_name: "PreToolUse", tool_name: ev.tool };
+      case "tool.after": return { ...base, hook_event_name: "PostToolUse" };
+      case "permission.asked": case "permission.updated": case "question.asked": case "form.created":
+        return { ...base, hook_event_name: "Notification" };
+      case "session.status": return d.status?.type === "idle" ? { ...base, hook_event_name: "Stop" } : {};
+      case "session.idle": case "session.error": case "session.execution.failed": case "session.execution.interrupted":
+        return { ...base, hook_event_name: "Stop" };
+      case "session.deleted": return { ...base, hook_event_name: "SessionEnd" };
+      default: return {};
+    }
+  },
+  // Hermes shell hooks: pre_llm_call runs before every model call, so it only means "thinking" (no new task);
+  // on_session_end ends a TURN, on_session_finalize the session.
+  hermes: (ev) => {
+    const name = {
+      on_session_start: "SessionStart", pre_llm_call: "PostToolUse", pre_tool_call: "PreToolUse", post_tool_call: "PostToolUse",
+      on_human_input_request: "Notification", on_session_end: "Stop", on_session_finalize: "SessionEnd",
+    }[ev.hook_event_name];
+    return name ? { session_id: ev.session_id, hook_event_name: name, tool_name: ev.tool_name } : {};
+  },
+  // Goose (Open Plugins hooks): the event is in `event`, the prompt in `message`.
+  goose: (ev) => ({ ...ev, hook_event_name: ev.hook_event_name ?? ev.event, prompt: ev.prompt ?? ev.message }),
+  // Crush: TurnStart carries no prompt (so: thinking, no task); PermissionRequest = waiting; TurnEnd = idle.
+  crush: (ev) => {
+    const name = { TurnStart: "PostToolUse", PermissionRequest: "Notification", PermissionResult: "PostToolUse", TurnEnd: "Stop" }[ev.hook_event_name ?? ev.event];
+    return { ...ev, hook_event_name: name ?? ev.hook_event_name ?? ev.event };
+  },
+  // OpenClaw: our extension forwards {event, session_id, prompt, tool}.
+  openclaw: (ev) => {
+    const name = { session_start: "SessionStart", prompt: "UserPromptSubmit", tool_start: "PreToolUse", tool_end: "PostToolUse", turn_end: "Stop", session_end: "SessionEnd" }[ev.event];
+    return name ? { session_id: ev.session_id, hook_event_name: name, prompt: ev.prompt, tool_name: ev.tool } : {};
+  },
   copilot: (ev, evName) => {
     const name = COPILOT_EVENTS[evName] ?? COPILOT_EVENTS[ev.hook_event_name] ?? ev.hook_event_name;
     const sub = ev.agentId ?? ev.agent_id ?? (name === "SubagentStart" ? ev.agentName : undefined);
@@ -925,23 +970,14 @@ const auggie = {
 // Kimi: flat [[hooks]] entries (event/matcher/command/timeout only — Kimi Code rejects unknown keys), in a marked block.
 const KIMI_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest",
   "Notification", "Stop", "StopFailure", "Interrupt", "SubagentStart", "SubagentStop", "SessionEnd"];
-const KIMI_BEGIN = "# >>> agenttown hooks >>>", KIMI_END = "# <<< agenttown hooks <<<";
-function editKimiConfig(path, add) {
-  const old = existsSync(path) ? readFileSync(path, "utf8") : "";
-  let text = old.replace(new RegExp(`\\n?${KIMI_BEGIN}[\\s\\S]*?${KIMI_END}\\n?`), "\n");
-  if (add) {
-    const blocks = KIMI_EVENTS.map((ev) => `[[hooks]]\nevent = "${ev}"\ncommand = '${HOOK_CMD("kimi")}'\ntimeout = 5\n`).join("\n");
-    text = `${text.trimEnd()}\n\n${KIMI_BEGIN}\n${blocks}${KIMI_END}\n`;
-  }
-  backup(path);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, text.replace(/^\n+/, ""));
-  return path;
-}
+// Text configs (TOML/bash/YAML) get one marked block that install replaces and uninstall removes.
+const MARK_BEGIN = "# >>> agenttown hooks >>>", MARK_END = "# <<< agenttown hooks <<<";
+const editKimiConfig = (path, add) =>
+  editMarkedBlock(path, add ? KIMI_EVENTS.map((ev) => `[[hooks]]\nevent = "${ev}"\ncommand = '${HOOK_CMD("kimi")}'\ntimeout = 5\n`).join("\n") : null);
 const kimi = {
   install: () => kimiConfigPaths().map((p) => editKimiConfig(p, true)).join(", "),
   uninstall: () => kimiConfigPaths().map((p) => editKimiConfig(p, false)).join(", "),
-  installed: () => kimiConfigPaths().some((p) => { try { return readFileSync(p, "utf8").includes(KIMI_BEGIN); } catch { return false; } }),
+  installed: () => kimiConfigPaths().some((p) => { try { return readFileSync(p, "utf8").includes(MARK_BEGIN); } catch { return false; } }),
   after: ["They take effect in new Kimi sessions."],
 };
 
@@ -1033,6 +1069,150 @@ const kiro = {
   after: ["They take effect in new Kiro sessions."],
 };
 
+// Plugin-based hosts get a tiny forwarder that pipes each event to `agenttown hook <adapter>` in a detached child:
+// it never awaits, never throws and never prints, so the host is never slowed or blocked.
+const FORWARD_JS = (adapter) => `import { spawn } from "node:child_process";
+import { homedir } from "node:os";
+import { join } from "node:path";
+// agenttown: status forwarder (\`agenttown uninstall ${adapter}\` removes it)
+const CLI = join(homedir(), ".agenttown", "agenttown.mjs");
+const report = (o) => {
+  try {
+    const p = spawn("node", [CLI, "hook", "${adapter}"], { detached: true, stdio: ["pipe", "ignore", "ignore"] });
+    p.on("error", () => {}); p.stdin.on("error", () => {}); p.stdin.end(JSON.stringify(o)); p.unref();
+  } catch {}
+};
+`;
+
+// OpenCode: one plugin file that works on 1.x (server()) and 2.x (id + setup()).
+const opencodePluginPath = () => join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode", "plugins", "agenttown.js");
+const OPENCODE_PLUGIN = FORWARD_JS("opencode") + `const V2 = ["session.created", "session.status", "session.idle", "session.deleted", "permission.asked", "form.created",
+  "session.execution.failed", "session.execution.interrupted"];
+const V1 = new Set(["session.created", "session.status", "session.idle", "session.deleted", "session.error", "permission.asked",
+  "permission.updated", "question.asked"]);
+export default {
+  id: "agenttown.status",
+  async setup(ctx) {
+    await ctx.session.hook("prompt", (e) => { report({ v: 2, event: "prompt", session_id: e.sessionID, prompt: e.prompt?.text }); });
+    await ctx.tool.hook("execute.before", (e) => { report({ v: 2, event: "tool.before", session_id: e.sessionID, tool: e.tool }); });
+    await ctx.tool.hook("execute.after", (e) => { report({ v: 2, event: "tool.after", session_id: e.sessionID, tool: e.tool }); });
+    const ac = new AbortController();
+    (async () => { for await (const ev of ctx.event.subscribe({ signal: ac.signal, types: V2 })) report({ v: 2, event: ev.type, data: ev.data }); })().catch(() => {});
+    return () => ac.abort();
+  },
+  async server() {
+    return {
+      event: async ({ event }) => { if (V1.has(event?.type)) report({ v: 1, event: event.type, properties: event.properties }); },
+      "chat.message": async (i, o) => {
+        report({ v: 1, event: "chat.message", session_id: i.sessionID, prompt: (o?.parts ?? []).filter((p) => p.type === "text").map((p) => p.text).join("\\n") });
+      },
+      "tool.execute.before": async (i) => { report({ v: 1, event: "tool.before", session_id: i.sessionID, tool: i.tool }); },
+      "tool.execute.after": async (i) => { report({ v: 1, event: "tool.after", session_id: i.sessionID, tool: i.tool }); },
+    };
+  },
+};
+`;
+const ownFile = (pathOf, contents, after) => ({
+  install: () => { const path = pathOf(); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, contents()); return path; },
+  uninstall: () => { const path = pathOf(); rmSync(path, { force: true }); return path; },
+  installed: () => existsSync(pathOf()),
+  after,
+});
+const opencode = ownFile(opencodePluginPath, () => OPENCODE_PLUGIN, ["OpenCode loads it in new sessions (1.x and 2.x)."]);
+
+// Goose: an Open Plugins plugin in ~/.agents/plugins/agenttown (plugin.json + hooks/hooks.json).
+const GOOSE_EVENTS = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop", "SessionEnd"];
+const gooseDir = () => join(homedir(), ".agents", "plugins", "agenttown");
+const goose = {
+  install: () => {
+    const dir = gooseDir();
+    mkdirSync(join(dir, "hooks"), { recursive: true });
+    writeFileSync(join(dir, "plugin.json"), JSON.stringify({ name: "agenttown", version: CLI_VERSION, description: "Agent Town status reporting" }, null, 2) + "\n");
+    const hooks = Object.fromEntries(GOOSE_EVENTS.map((ev) => [ev, [{ hooks: [{ type: "command", command: HOOK_CMD("goose"), timeout: 5 }] }]]));
+    writeFileSync(join(dir, "hooks", "hooks.json"), JSON.stringify({ hooks }, null, 2) + "\n");
+    return dir;
+  },
+  uninstall: () => { const dir = gooseDir(); rmSync(dir, { recursive: true, force: true }); return dir; },
+  installed: () => existsSync(join(gooseDir(), "hooks", "hooks.json")),
+  after: ["Goose discovers it in new sessions (disable it with \"disabledPlugins\" in ~/.config/goose/settings.json)."],
+};
+
+// Crush: a marked block in ~/.config/crush/crushrc (a bash file Crush runs itself).
+const CRUSH_EVENTS = ["SessionStart", "TurnStart", "PreToolUse", "PostToolUse", "PostToolUseFailure", "PermissionRequest", "PermissionResult",
+  "TurnEnd", "StopFailure", "Interrupt", "SessionEnd"];
+const crushrcPath = () => process.env.CRUSH_GLOBAL_CONFIG || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "crush", "crushrc");
+const crush = {
+  install: () => editMarkedBlock(crushrcPath(), `for ev in ${CRUSH_EVENTS.join(" ")}; do\n  hook add "$ev" --name agenttown --command '${HOOK_CMD("crush")}' --timeout 5\ndone\n`),
+  uninstall: () => editMarkedBlock(crushrcPath(), null),
+  installed: () => { try { return readFileSync(crushrcPath(), "utf8").includes(MARK_BEGIN); } catch { return false; } },
+  after: ["They take effect in new Crush sessions."],
+};
+
+// Hermes: shell hooks in ~/.hermes/config.yaml. Hermes runs the command without a shell (no $HOME), so it goes through
+// /bin/sh (a node path from process.execPath would break on the next Node upgrade). We add a top-level "hooks:" block only if the file has none (merging YAML by hand is not worth the risk).
+const hermesConfigPath = () => join(process.env.HERMES_HOME || join(homedir(), ".hermes"), "config.yaml");
+const HERMES_EVENTS = ["on_session_start", "pre_llm_call", "pre_tool_call", "post_tool_call", "on_human_input_request", "on_session_end", "on_session_finalize"];
+const hermesCmd = () => "/bin/sh -c 'exec node $HOME/.agenttown/agenttown.mjs hook hermes'";
+const hermes = {
+  install: () => {
+    const path = hermesConfigPath();
+    const text = existsSync(path) ? readFileSync(path, "utf8").replace(new RegExp(`\\n?${MARK_BEGIN}[\\s\\S]*?${MARK_END}\\n?`), "\n") : "";
+    if (/^hooks\s*:/m.test(text)) {
+      fail(`${path} already has a "hooks:" section; add these entries to it yourself (nothing changed):\n` +
+        HERMES_EVENTS.map((ev) => `  ${ev}:\n    - command: "${hermesCmd()}"\n      timeout: 5`).join("\n"));
+    }
+    return editMarkedBlock(path, `hooks:\n${HERMES_EVENTS.map((ev) => `  ${ev}:\n    - command: "${hermesCmd()}"\n      timeout: 5`).join("\n")}\n`);
+  },
+  uninstall: () => editMarkedBlock(hermesConfigPath(), null),
+  installed: () => { try { return readFileSync(hermesConfigPath(), "utf8").includes(MARK_BEGIN); } catch { return false; } },
+  after: ["Hermes asks once per hook to approve it the next time you run `hermes chat` (check with `hermes hooks list`).",
+    "Gateway/cron runs never prompt: approve them in a chat session first."],
+};
+
+// OpenClaw: a typed-hooks extension in ~/.openclaw/extensions/agenttown.
+const openclawDir = () => join(homedir(), ".openclaw", "extensions", "agenttown");
+const OPENCLAW_PLUGIN = `import { definePluginEntry } from "openclaw/plugin-sdk/plugin-entry";
+` + FORWARD_JS("openclaw") + `export default definePluginEntry({
+  id: "agenttown", name: "Agent Town", description: "Reports status to Agent Town",
+  register(api) {
+    api.on("session_start", (e) => { report({ event: "session_start", session_id: e.sessionId }); });
+    api.on("before_agent_run", (e, c) => { report({ event: "prompt", session_id: c.sessionId, prompt: e.prompt }); });
+    api.on("before_tool_call", (e, c) => { report({ event: "tool_start", session_id: c.sessionId, tool: e.toolName }); });
+    api.on("after_tool_call", (e, c) => { report({ event: "tool_end", session_id: c.sessionId }); });
+    api.on("agent_end", (e, c) => { report({ event: "turn_end", session_id: c.sessionId }); });
+    api.on("session_end", (e) => { report({ event: "session_end", session_id: e.sessionId }); });
+  },
+});
+`;
+const openclaw = {
+  install: () => {
+    const dir = openclawDir();
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "agenttown-openclaw", type: "module", openclaw: { extensions: ["./index.js"] } }, null, 2) + "\n");
+    writeFileSync(join(dir, "openclaw.plugin.json"), JSON.stringify({ id: "agenttown", name: "Agent Town", activation: { onStartup: true },
+      configSchema: { type: "object", additionalProperties: false } }, null, 2) + "\n");
+    writeFileSync(join(dir, "index.js"), OPENCLAW_PLUGIN);
+    return dir;
+  },
+  uninstall: () => { const dir = openclawDir(); rmSync(dir, { recursive: true, force: true }); return dir; },
+  installed: () => existsSync(join(openclawDir(), "index.js")),
+  after: ["Then: `openclaw plugins enable agenttown`. For prompt/turn-end status also set",
+    "plugins.entries.agenttown.hooks.allowConversationAccess: true (only an encrypted task title leaves the machine).",
+    "Check with `openclaw plugins inspect agenttown --runtime --json`."],
+};
+
+/** A "# >>> agenttown hooks >>>" … "# <<<" block at the end of a text config (bash/TOML/YAML): replaced or removed. */
+function editMarkedBlock(path, block) {
+  const old = existsSync(path) ? readFileSync(path, "utf8") : "";
+  let text = old.replace(new RegExp(`\\n?${MARK_BEGIN}[\\s\\S]*?${MARK_END}\\n?`), "\n");
+  text = text.trimEnd() ? `${text.trimEnd()}\n` : "";
+  if (block) text = `${text}\n${MARK_BEGIN}\n${block}${MARK_END}\n`;
+  backup(path);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, text.replace(/^\n+/, ""));
+  return path;
+}
+
 // How `agenttown install <adapter>` wires each host. Every hook runs `agenttown hook <adapter>`: silent, ≤1.5 s.
 const ADAPTERS = {
   "claude-code": claudeStyle("claude-code", claudeSettingsPath, ["They take effect in new Claude Code sessions."]),
@@ -1047,6 +1227,11 @@ const ADAPTERS = {
   windsurf,
   cline,
   kiro,
+  opencode,
+  hermes,
+  goose,
+  crush,
+  openclaw,
   gemini,
   copilot,
   codex: {

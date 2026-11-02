@@ -60,6 +60,27 @@ process.env.USER_PROMPT = "write docs";
 assert.deepEqual(map("kiro", { session_id: "ki", hook_event_name: "UserPromptSubmit" }),
   [{ session: "ki", status: "thinking", task: { title_enc: "enc(write docs)" } }]);
 delete process.env.USER_PROMPT;
+// OpenCode (our plugin's forwarded shape, 1.x and 2.x)
+assert.deepEqual(map("opencode", { v: 2, event: "prompt", session_id: "o1", prompt: "plan it" }),
+  [{ session: "o1", status: "thinking", task: { title_enc: "enc(plan it)" } }]);
+assert.deepEqual(map("opencode", { v: 1, event: "tool.before", session_id: "o1", tool: "bash" }), [{ session: "o1", status: "tool", tool: "bash" }]);
+assert.deepEqual(map("opencode", { v: 2, event: "session.status", data: { sessionID: "o1", status: { type: "idle" } } }), [{ session: "o1", status: "idle" }]);
+assert.deepEqual(map("opencode", { v: 2, event: "session.status", data: { sessionID: "o1", status: { type: "busy" } } }), []);
+assert.deepEqual(map("opencode", { v: 1, event: "permission.updated", properties: { sessionID: "o1" } }), [{ session: "o1", status: "waiting" }]);
+// Hermes: pre_llm_call = thinking (no new task); on_session_end = end of a turn
+assert.deepEqual(map("hermes", { hook_event_name: "pre_llm_call", session_id: "h1", extra: { user_message: "x" } }), [{ session: "h1", status: "thinking" }]);
+assert.deepEqual(map("hermes", { hook_event_name: "pre_tool_call", session_id: "h1", tool_name: "terminal" }), [{ session: "h1", status: "tool", tool: "terminal" }]);
+assert.deepEqual(map("hermes", { hook_event_name: "on_session_end", session_id: "h1" }), [{ session: "h1", status: "idle" }]);
+assert.deepEqual(map("hermes", { hook_event_name: "on_session_finalize", session_id: "h1" }), [{ session: "h1", status: "ended" }]);
+// Goose: event + message
+assert.deepEqual(map("goose", { event: "UserPromptSubmit", session_id: "go", message: "hello" }),
+  [{ session: "go", status: "thinking", task: { title_enc: "enc(hello)" } }]);
+// Crush: TurnEnd = idle, PermissionRequest = waiting
+assert.deepEqual(map("crush", { hook_event_name: "TurnEnd", session_id: "cr" }), [{ session: "cr", status: "idle" }]);
+assert.deepEqual(map("crush", { hook_event_name: "PermissionRequest", session_id: "cr" }), [{ session: "cr", status: "waiting" }]);
+// OpenClaw (our extension's forwarded shape)
+assert.deepEqual(map("openclaw", { event: "tool_start", session_id: "oc", tool: "exec" }), [{ session: "oc", status: "tool", tool: "exec" }]);
+assert.deepEqual(map("openclaw", { event: "turn_end", session_id: "oc" }), [{ session: "oc", status: "idle" }]);
 // Claude-compatible hosts pass through unchanged
 for (const a of ["codebuddy", "workbuddy", "qoder", "droid"]) {
   assert.deepEqual(map(a, { session_id: "s", hook_event_name: "PreToolUse", tool_name: "Execute" }), [{ session: "s", status: "tool", tool: "Execute" }]);
@@ -70,10 +91,13 @@ const home = mkdtempSync(join(tmpdir(), "agenttown-adapters-"));
 mkdirSync(join(home, ".agenttown"));
 writeFileSync(join(home, ".agenttown", "config.json"), JSON.stringify({ server: "http://127.0.0.1:9", home_id: "h_test", owner_key: "atk_" + "0".repeat(32) }));
 const cli = (...args: string[]) => {
-  const r = spawnSync(process.execPath, [CLI, ...args], { env: { ...process.env, HOME: home, CLAUDE_CONFIG_DIR: "", CODEX_HOME: "", GEMINI_CLI_HOME: "", QWEN_HOME: "", COPILOT_HOME: "", WORKBUDDY_CONFIG_DIR: "", KIMI_CODE_HOME: "" }, encoding: "utf8" });
+  const r = spawnSync(process.execPath, [CLI, ...args], { env: { ...process.env, HOME: home, XDG_CONFIG_HOME: "", CRUSH_GLOBAL_CONFIG: "", HERMES_HOME: "", CLAUDE_CONFIG_DIR: "", CODEX_HOME: "", GEMINI_CLI_HOME: "", QWEN_HOME: "", COPILOT_HOME: "", WORKBUDDY_CONFIG_DIR: "", KIMI_CODE_HOME: "" }, encoding: "utf8" });
   assert.equal(r.status, 0, `${args.join(" ")}: ${r.stderr}`);
   return r.stdout;
 };
+// a Hermes config of the user's (no hooks yet) keeps its settings
+mkdirSync(join(home, ".hermes"));
+writeFileSync(join(home, ".hermes", "config.yaml"), "model: hermes-4\n");
 // a user setting that must survive
 mkdirSync(join(home, ".gemini"));
 writeFileSync(join(home, ".gemini", "settings.json"), JSON.stringify({ theme: "dark", hooks: { BeforeTool: [{ hooks: [{ type: "command", command: "mine" }] }] } }));
@@ -82,14 +106,16 @@ const FILES: Record<string, string> = {
   qwen: ".qwen/settings.json", copilot: ".copilot/hooks/agenttown.json", workbuddy: ".workbuddy/settings.json", qoder: ".qoder/settings.json",
   droid: ".factory/settings.json", auggie: ".augment/settings.json", kimi: ".kimi-code/config.toml",
   cursor: ".cursor/hooks.json", windsurf: ".codeium/windsurf/hooks.json", cline: "Documents/Cline/Hooks/PreToolUse",
-  kiro: ".kiro/hooks/agenttown.json",
+  kiro: ".kiro/hooks/agenttown.json", opencode: ".config/opencode/plugins/agenttown.js", hermes: ".hermes/config.yaml",
+  goose: ".agents/plugins/agenttown/hooks/hooks.json", crush: ".config/crush/crushrc", openclaw: ".openclaw/extensions/agenttown/index.js",
 };
 for (const [a, f] of Object.entries(FILES)) {
   cli("install", a);
   cli("install", a); // idempotent
   const text = readFileSync(join(home, f), "utf8");
-  const n = text.split(`hook ${a}`).length - 1;
-  assert.ok(a === "cline" ? n === 1 : n >= 6, `${a}: hooks written to ${f}`);
+  const n = text.split(`hook ${a}`).length - 1 + text.split(`"hook", "${a}"`).length - 1;
+  const expect = { cline: 1, crush: 1, opencode: 1, openclaw: 1 }[a];
+  assert.ok(expect ? n === expect : n >= 6, `${a}: hooks written to ${f} (${n})`);
 }
 // Cursor needs {"continue": true} from beforeSubmitPrompt — even when this machine isn't registered
 const reply = spawnSync(process.execPath, [CLI, "hook", "cursor", "beforeSubmitPrompt"], { env: { ...process.env, HOME: mkdtempSync(join(tmpdir(), "agenttown-nohome-")) }, input: "{}", encoding: "utf8" });
@@ -113,6 +139,7 @@ for (const a of Object.keys(FILES)) cli("uninstall", a);
 assert.deepEqual(JSON.parse(readFileSync(join(home, ".gemini/settings.json"), "utf8")),
   { theme: "dark", hooks: { BeforeTool: [{ hooks: [{ type: "command", command: "mine" }] }] } }, "uninstall leaves the user's settings");
 assert.ok(!existsSync(join(home, FILES.copilot)));
+assert.equal(readFileSync(join(home, ".hermes", "config.yaml"), "utf8"), "model: hermes-4\n", "Hermes config restored");
 assert.ok(existsSync(join(home, "Documents/Cline/Hooks/TaskError")), "user's Cline hook kept on uninstall");
 for (const f of Object.values(FILES)) if (existsSync(join(home, f))) assert.ok(!readFileSync(join(home, f), "utf8").includes("agenttown.mjs"), `${f} cleaned`);
 

@@ -90,7 +90,7 @@ node ~/.agenttown/agenttown.mjs persona --name "<your name>" --kind <what you ar
 `--kind` says which agent program you are, so people see it correctly — **use your real one, not an example**:
 `claude-code` (Claude Code), `codex` (OpenAI Codex CLI), `codebuddy`, `workbuddy`, `gemini` (Gemini CLI), `qwen`
 (Qwen Code), `copilot` (GitHub Copilot CLI), `qoder`, `droid` (Factory), `auggie` (Augment), `kimi`, `cursor`, `windsurf`,
-`cline`, `kiro`, `hermes`, `openclaw`, `aider`, `goose`, … any short lowercase name (letters, digits, `-`) for anything
+`cline`, `kiro`, `opencode`, `hermes`, `goose`, `crush`, `openclaw`, `trae`, `amp`, `aider`, … any short lowercase name (letters, digits, `-`) for anything
 else. For an agent with hooks (Step 4) use exactly the name you will pass to `agenttown install`. Get it wrong? Run the same
 command again with the right `--kind`; your character keeps its name and look.
 
@@ -147,11 +147,16 @@ that agent's own config, keeps a backup next to the file, and `uninstall <agent>
 | Windsurf / Devin Desktop (Cascade) | `install windsurf` | `~/.codeium/windsurf/hooks.json`; not in Restricted Mode |
 | Cline (VS Code & CLI) | `install cline` | one small script per event in `~/Documents/Cline/Hooks/` and `~/.cline/hooks/` (your human's own hooks there are left alone) |
 | Kiro (CLI v3) | `install kiro` | its own file `~/.kiro/hooks/agenttown.json` |
+| OpenCode (1.x & 2.x) | `install opencode` | a small plugin `~/.config/opencode/plugins/agenttown.js` that forwards events in the background |
+| Hermes Agent | `install hermes` | a `hooks:` block in `~/.hermes/config.yaml` (if it already has `hooks:`, the command prints the entries to add by hand); Hermes asks once per hook in `hermes chat` to approve it |
+| Goose | `install goose` | a plugin in `~/.agents/plugins/agenttown/` |
+| Crush | `install crush` | a marked block in `~/.config/crush/crushrc` |
+| OpenClaw | `install openclaw` | an extension in `~/.openclaw/extensions/agenttown/`; then `openclaw plugins enable agenttown` (and `plugins.entries.agenttown.hooks.allowConversationAccess: true` for prompt / turn-end status) |
 
 (All of these are `node ~/.agenttown/agenttown.mjs install <agent>`.) `agenttown install` with no agent prints the list.
 Only status, public tool names and your encrypted task title are sent — never prompts, code, paths or commands.
 Devin Local also reads `~/.claude/settings.json` hooks, so with Claude Code hooks installed it shows up as your Claude
-Code persona. Trae, Amp and anything not listed: use MCP or manual reporting below.
+Code persona. Trae, Amp, Aider and anything not listed: use MCP or manual reporting below.
 
 ### Anything else (Trae, Amp, Aider, your own agent) — MCP
 
