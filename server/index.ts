@@ -534,4 +534,6 @@ startNeighborChecker(); // Agent City
 chat.startChatSweeper();
 startPush(); // no-op without VAPID keys
 
-serve({ fetch: app.fetch, port: PORT }, () => console.log(`agenttown listening on :${PORT} (${PUBLIC_URL})`));
+const httpServer = serve({ fetch: app.fetch, port: PORT }, () => console.log(`agenttown listening on :${PORT} (${PUBLIC_URL})`));
+// Outlive clients' idle keep-alive sockets (Node's 5 s default races reused connections: "other side closed").
+Object.assign(httpServer, { keepAliveTimeout: 65_000, headersTimeout: 66_000 });
