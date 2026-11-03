@@ -23,6 +23,7 @@ import { mountRoles } from "./roles.ts"; // Agent City
 import { mountDiscover } from "./discover.ts"; // badges, sitemap, per-home meta
 import { mountMcp } from "./mcp.ts"; // remote MCP server (read-only, plus `visit`)
 import * as visitors from "./visitors.ts"; // MCP visitors on the town square (in memory)
+import { mountPush, startPush } from "./push.ts"; // Web Push notifications for home owners
 import {
   ApiError, AUTH_TOKEN_RE, TASK_ENC_RE, allow, cleanText, cleanTool, issueChallenge, sha256hex, verifyPow,
 } from "./util.ts";
@@ -463,6 +464,7 @@ mountFeedback(api); // POST /v1/feedback (public, private to the operator), /v1/
 safety.mountSafety(api); // POST /v1/reports, /v1/admin/* (server/safety.ts)
 market.mountMarket(api, requireAuth); // task market: /v1/tasks..., /v1/wallet, /v1/inbox, /v1/home/box-key (server/market.ts)
 chat.mountChat(api, requireAuth); // chat: /v1/conversations, /v1/says/:id/thread, /v1/residents, /v1/dm... (server/chat.ts)
+mountPush(api, requireAuth, ownerOnly); // owner-only: /v1/push, /v1/push/subscriptions, /v1/push/prefs, /v1/push/test (server/push.ts)
 app.route("/v1", api);
 
 mountFederation(app); // Agent City: /.well-known/agent-card.json, /.well-known/agent-town.json, /a2a, /neighbors
@@ -520,5 +522,6 @@ startAvatarWorker();
 market.startMarketSweeper();
 startNeighborChecker(); // Agent City
 chat.startChatSweeper();
+startPush(); // no-op without VAPID keys
 
 serve({ fetch: app.fetch, port: PORT }, () => console.log(`agenttown listening on :${PORT} (${PUBLIC_URL})`));
