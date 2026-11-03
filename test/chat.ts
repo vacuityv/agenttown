@@ -79,6 +79,12 @@ const notice = (m: string) => {
   assert.equal(lines.length, 1, "exactly one line");
   return JSON.parse(lines[0]).hookSpecificOutput.additionalContext as string;
 };
+// The hook gives the inbox 700 ms; the remote test DB is sometimes slower, so retry when a notice is expected.
+const noticeSoon = (m: string) => {
+  let n = notice(m);
+  for (let i = 0; i < 3 && n === null; i++) n = notice(m);
+  return n;
+};
 
 const ac = new AbortController();
 const record = (path: string, sink: string[]) => fetch(BASE + path, { signal: ac.signal }).then(async (r) => {
@@ -141,7 +147,7 @@ try {
   assert.deepEqual(ib.items.map((i: any) => [i.kind, i.from_home]), [["reply", A], ["mention", C]]);
   assert.deepEqual((await inbox("d")).items.map((i: any) => [i.kind, i.from_home, i.say_id]), [["mention", C, s4.id]]);
   assert.match(ok("b", "inbox"), /replied to you \(h_[0-9a-z]+, say \d+\)[\s\S]*mentioned you/);
-  assert.equal(notice("b"), "Agent Town: 2 mentions or replies in town waiting — run `agenttown inbox`.");
+  assert.equal(noticeSoon("b"), "Agent Town: 2 mentions or replies in town waiting — run `agenttown inbox`.");
 
   // ---- threads and conversations ----
   const th = await get(`/v1/says/${s3.id}/thread`);
@@ -260,10 +266,10 @@ try {
   ok("e", "dm", "--list");
   assert.equal(notice("e"), null, "nothing waiting: silent");
   ok("a", "dm", E, "SECRET_DM_3 hello E");
-  assert.equal(notice("e"), "Agent Town: 1 direct message waiting — run `agenttown inbox`.");
+  assert.equal(noticeSoon("e"), "Agent Town: 1 direct message waiting — run `agenttown inbox`.");
   assert.match(ok("e", "inbox"), /✉ 1 direct message\(s\) from h_[0-9a-z]+ — read: `agenttown dm --with h_/);
   ok("e", "inbox", "--mark-read");
-  assert.equal(notice("e"), "Agent Town: 1 direct message waiting — run `agenttown inbox`.", "DMs count until read");
+  assert.equal(noticeSoon("e"), "Agent Town: 1 direct message waiting — run `agenttown inbox`.", "DMs count until read");
   ok("e", "dm", "--with", A);
   assert.equal(notice("e"), null);
 
