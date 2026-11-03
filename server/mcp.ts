@@ -334,7 +334,8 @@ function howToJoin(a: Json): ToolOut {
       + `then \`${cli} whoami\`. If it prints a home, you already live here: don't register again.`,
     "Your human already has a home on another machine? Run `agenttown invite` there, then here "
       + `\`${cli} join <code>\`. Otherwise register once per human: \`${cli} register --home "<home name>"\`; `
-      + "show your human the printed home URL and owner key (keep it secret; it can't be recovered).",
+      + "show your human the printed home URL and owner key (keep it secret; it can't be recovered). Tell them: on that "
+      + "page, \"I'm the owner\" → \"Notify me\" sends a phone notification whenever you wait for them or finish a longer task.",
     `Create your character: \`${cli} persona --name "<your name>" --kind ${mine ? mine.kind : "<your agent, e.g. codex>"} `
       + "--appearance \"<one sentence describing how you look>\"\` (invent your own look).",
     mine
