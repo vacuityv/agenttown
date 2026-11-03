@@ -21,6 +21,7 @@ import { MARKET } from "./config.ts";
 import { mountFederation, startNeighborChecker } from "./federation.ts"; // Agent City
 import { mountRoles } from "./roles.ts"; // Agent City
 import { mountDiscover } from "./discover.ts"; // badges, sitemap, per-home meta
+import * as stats from "./stats.ts"; // daily funnel counters, GET /v1/admin/stats
 import { mountMcp } from "./mcp.ts"; // remote MCP server (read-only, plus `visit`)
 import * as visitors from "./visitors.ts"; // MCP visitors on the town square (in memory)
 import {
@@ -144,6 +145,7 @@ api.post("/register", async (c) => {
   // ref: the home that invited this one (agents.md?ref=<home id>); unknown/hidden ones are ignored, never an error.
   const ref = typeof b.ref === "string" && /^h_[a-z0-9]{4,24}$/.test(b.ref) ? b.ref : null;
   const home = await store.createHome(sha256hex(b.auth_token), name, ref);
+  stats.bump(ref ? "register.ref" : "register");
   return c.json({ home, home_url: `${PUBLIC_URL}/h/${home.id}` }, 201);
 });
 
@@ -215,6 +217,7 @@ api.post("/personas", requireAuth, async (c) => {
   limit(`persona:${home.id}`, 1 / 60, 10);
   const b = await body(c);
   const { name, kind } = personaFields(b);
+  stats.bump(`persona:${/^[a-z0-9-]{1,24}$/.test(kind) ? kind : "other"}`);
   const appearance = b.appearance === undefined ? null : cleanText(b.appearance, 200);
   assertAllowed("persona", name, appearance);
   return c.json({ persona: await store.upsertPersona(home.id, name, kind, appearance) });
@@ -457,6 +460,7 @@ api.get("/stream", (c) => {
   }, async (err) => { release(); console.error("stream error", err); });
 });
 
+stats.mountStats(api);
 release.mountRelease(app, api); // /cli/agenttown.mjs.sig, /cli/release.json, /v1/admin/announcement, /v1/admin/homes
 mountRoles(api); // Agent City: POST /v1/admin/homes/:id/role (server/roles.ts)
 mountFeedback(api); // POST /v1/feedback (public, private to the operator), /v1/admin/feedback (server/feedback.ts)
@@ -472,11 +476,16 @@ mountMcp(app); // remote MCP (Streamable HTTP, stateless; read-only + `visit`): 
 
 const templated = (file: string, type: string) => {
   const body = readFileSync(new URL(`../public/${file}`, import.meta.url), "utf8").replaceAll("{{BASE_URL}}", PUBLIC_URL);
-  return (c: Context) => c.body(body, 200, { "content-type": type, "cache-control": "public, max-age=300" });
+  const metric = { "llms.txt": "llms_txt", "sdk/agenttown.mjs": "sdk_js", "sdk/agenttown.py": "sdk_py" }[file];
+  return (c: Context) => {
+    if (metric) stats.bump(`${metric}:${stats.uaClass(c.req.header("user-agent"))}`);
+    return c.body(body, 200, { "content-type": type, "cache-control": "public, max-age=300" });
+  };
 };
 // agents.md?ref=<home id>: the register command carries the inviting home (both homes get bonus coins).
 const agentsMd = readFileSync(new URL("../public/agents.md", import.meta.url), "utf8").replaceAll("{{BASE_URL}}", PUBLIC_URL);
 app.get("/agents.md", (c) => {
+  stats.bump(`agents_md:${stats.uaClass(c.req.header("user-agent"))}`);
   const ref = c.req.query("ref");
   const ok = typeof ref === "string" && /^h_[a-z0-9]{4,24}$/.test(ref);
   const body = agentsMd
@@ -488,7 +497,7 @@ app.get("/changelog.md", templated("changelog.md", "text/markdown; charset=utf-8
 app.get("/robots.txt", templated("robots.txt", "text/plain; charset=utf-8")); // Sitemap: needs an absolute URL
 app.get("/llms.txt", templated("llms.txt", "text/plain; charset=utf-8"));
 // Exactly the bytes the release signature covers (server/release.ts).
-app.get("/cli/agenttown.mjs", (c) => c.body(release.servedCli, 200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=300" }));
+app.get("/cli/agenttown.mjs", (c) => (stats.bump(`cli:${stats.uaClass(c.req.header("user-agent"))}`), c.body(release.servedCli, 200, { "content-type": "text/javascript; charset=utf-8", "cache-control": "public, max-age=300" })));
 app.get("/cli/agenttown-mcp.mjs", templated("../plugins/mcp/agenttown-mcp.mjs", "text/javascript; charset=utf-8"));
 // Client libraries for agents built with SDKs / running on servers and in CI (agents.md, "Agents built with SDKs").
 // JavaScript as text/javascript so Deno can import it by URL; Python as text/plain so browsers show it.
@@ -517,6 +526,7 @@ try {
 }
 
 startAvatarWorker();
+stats.startStats();
 market.startMarketSweeper();
 startNeighborChecker(); // Agent City
 chat.startChatSweeper();

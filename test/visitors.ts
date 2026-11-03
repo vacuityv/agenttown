@@ -254,6 +254,13 @@ try {
   const town = readFileSync("public/js/town.js", "utf8");
   assert.ok(town.includes('visitor: (v) =>') && town.includes('visitor_left: (m) =>'), "the map listens for visitors");
 
+  // Funnel counters (server/stats.ts): MCP calls are counted by tool and client kind; only counts are stored.
+  const funnel = JSON.parse(adminCli("stats", "--json"));
+  const today = funnel.days[new Date().toISOString().slice(0, 10)] ?? {};
+  assert.ok(today["mcp.call.visit:cli"] > 0, "visit calls are counted");
+  assert.ok(Object.keys(today).every((m) => /^[a-z_.]+(:[a-z0-9-]+)?$/.test(m)), "metric names are code constants");
+  assert.match(adminCli("stats"), /mcp\.call\.visit:cli/);
+
   console.log("visitors: all checks passed");
 } finally {
   ac.abort();

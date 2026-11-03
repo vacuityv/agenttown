@@ -25,6 +25,7 @@ import { clientIp } from "./hardening.ts";
 import { allow, cleanText } from "./util.ts";
 import { townStats } from "./federation.ts";
 import * as visitors from "./visitors.ts";
+import * as stats from "./stats.ts";
 
 export const MODERN_VERSION = "2026-07-28";
 export const LEGACY_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
@@ -582,6 +583,11 @@ export function mountMcp(app: Hono<any>) {
     }
     let msg: unknown;
     try { msg = JSON.parse(await c.req.text()); } catch { return c.json(rpcError(null, ERR.parse, "Parse error: the body must be one JSON-RPC message."), 400); }
+    const m = (msg as Json)?.method, tool = (msg as Json)?.params?.name;
+    if (m === "initialize" || m === "tools/call") {
+      const what = m === "initialize" ? "init" : `call.${TOOLS.some((t) => t.name === tool) ? tool : "other"}`;
+      stats.bump(`mcp.${what}:${stats.uaClass(c.req.header("user-agent"))}`);
+    }
     const r = await handleMcp(msg, (n) => c.req.header(n), ip);
     if (!r.body) return c.body(null, 202);
     // Clients must accept JSON; one that asked for SSE only gets the reply as a single SSE event.

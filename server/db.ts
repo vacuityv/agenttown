@@ -447,6 +447,17 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
       "ALTER TABLE homes ADD COLUMN referred_by VARCHAR(32) NULL",
     ],
   },
+  {
+    version: 851, // daily funnel counters (server/stats.ts)
+    statements: [
+      `CREATE TABLE IF NOT EXISTS funnel_stats (
+        day    DATE        NOT NULL,
+        metric VARCHAR(64) NOT NULL,
+        n      BIGINT      NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, metric)
+      )`,
+    ],
+  },
   // ---- end Agent City ----
   // ---- chat: public replies/mentions + E2E direct messages (server/chat.ts, server/chat-core.ts). Versions >= 600. ----
   {

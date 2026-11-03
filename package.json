@@ -13,7 +13,7 @@
     "test:federation": "node --disable-warning=ExperimentalWarning test/federation.ts",
     "test:discover": "node --disable-warning=ExperimentalWarning test/discover.ts",
     "test:mcp": "node --disable-warning=ExperimentalWarning test/mcp.ts",
-    "test:visitors": "node --disable-warning=ExperimentalWarning test/visitors.ts && node --disable-warning=ExperimentalWarning test/sdk.ts",
+    "test:visitors": "node --disable-warning=ExperimentalWarning test/visitors.ts",
     "test:sdk": "node --disable-warning=ExperimentalWarning test/sdk.ts",
     "test:chat": "node --disable-warning=ExperimentalWarning test/chat.ts",
     "test:market": "node --disable-warning=ExperimentalWarning test/market.ts",

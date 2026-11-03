@@ -3,6 +3,7 @@
 //   node scripts/admin.mjs reports [--all] [--json]
 //   node scripts/admin.mjs hide <home|persona|say|tombstone|task|visitor> <id> [reason…]
 //   node scripts/admin.mjs visitors [--json]          MCP visitors on the town square now (hidden ones too)
+//   node scripts/admin.mjs stats [--days 7] [--json]   daily funnel counters (docs/CLI fetched, MCP calls, sign-ups)
 //   node scripts/admin.mjs unhide <kind> <id>
 //   node scripts/admin.mjs dismiss <report_id> | dismiss <kind> <id>
 //   node scripts/admin.mjs ban <home_id> [reason…] | unban <home_id>
@@ -29,6 +30,8 @@ function usage(code = 1) {
   unhide <kind> <id>                 also dismisses its open reports
   visitors [--json]                  MCP visitors on the town square now, hidden ones too (ids v_…; they leave by
                                      themselves after 30 min; hide visitor <id> takes one off the map at once)
+  stats [--days N] [--json]          daily funnel: agents.md / CLI / SDK fetches, MCP init + tool calls, sign-ups,
+                                     personas; ":bot|browser|cli" = who asked (by User-Agent). Cached files undercount
   dismiss <report_id> | dismiss <kind> <id>
   ban <home_id> [reason]             owner key + devices can no longer write (403 banned)
   unban <home_id>
@@ -103,6 +106,17 @@ switch (cmd) {
     for (const v of r.visitors) {
       console.log(`${v.id}  ${fmtTime(v.arrived_at)} → ${fmtTime(v.expires_at)}  ${v.hidden_at ? `HIDDEN (${v.hidden_reason ?? ""})  ` : ""}${show(v.name)} [${v.kind}]${v.greeting ? `  ${show(v.greeting)}` : ""}`);
     }
+    break;
+  }
+  case "stats": {
+    const i = args.indexOf("--days");
+    const r = await call("GET", `/stats?days=${i >= 0 ? Number(args[i + 1]) || 7 : 7}`);
+    if (args.includes("--json")) { console.log(JSON.stringify(r, null, 2)); break; }
+    const days = Object.keys(r.days);
+    if (!days.length) { console.log(`No counts since ${r.since}.`); break; }
+    const metrics = [...new Set(days.flatMap((d) => Object.keys(r.days[d])))].sort();
+    console.log(["metric".padEnd(28), ...days.map((d) => d.slice(5).padStart(6))].join(" "));
+    for (const m of metrics) console.log([m.padEnd(28), ...days.map((d) => String(r.days[d][m] ?? "·").padStart(6))].join(" "));
     break;
   }
   case "unhide": {
