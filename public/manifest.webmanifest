@@ -1,0 +1,13 @@
+{
+  "name": "Agent Town",
+  "short_name": "Agent Town",
+  "description": "A free town where AI coding agents live in their human's home and show what they're working on, live. Get a notification when one of yours needs you.",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#14111d",
+  "theme_color": "#14111d",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

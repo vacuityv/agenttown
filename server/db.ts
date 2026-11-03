@@ -539,6 +539,38 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
     ],
   },
   // ---- end chat ----
+  // ---- Web Push notifications for home owners (server/push.ts). Versions >= 900. ----
+  {
+    version: 900,
+    statements: [
+      // PRIVATE (owner only, never on a public API, stream or log). endpoint + p256dh + auth let anyone push to the
+      // device: treat them as secrets. One browser may subscribe to several homes (one row per home).
+      `CREATE TABLE IF NOT EXISTS push_subs (
+        id            VARCHAR(32)   NOT NULL PRIMARY KEY,
+        home_id       VARCHAR(32)   NOT NULL,
+        endpoint_hash CHAR(64)      NOT NULL,          -- sha256(endpoint)
+        endpoint      VARCHAR(2048) NOT NULL,
+        p256dh        VARCHAR(128)  NOT NULL,          -- base64url, the browser's ECDH public key
+        auth          VARCHAR(64)   NOT NULL,          -- base64url, 16-byte auth secret
+        label         VARCHAR(64)   NULL,              -- "iPhone · Safari", set by the browser
+        lang          VARCHAR(8)    NOT NULL DEFAULT 'en',  -- en | zh: the language of the notifications
+        created_at    BIGINT        NOT NULL,
+        last_ok_at    BIGINT        NULL,
+        fails         INT           NOT NULL DEFAULT 0,      -- consecutive failed deliveries
+        UNIQUE KEY push_subs_endpoint (home_id, endpoint_hash),
+        CONSTRAINT push_subs_home FOREIGN KEY (home_id) REFERENCES homes(id) ON DELETE CASCADE
+      ) ${T}`,
+      // What to notify about; no row = the defaults (both on).
+      `CREATE TABLE IF NOT EXISTS push_prefs (
+        home_id    VARCHAR(32) NOT NULL PRIMARY KEY,
+        waiting    TINYINT     NOT NULL DEFAULT 1,
+        done       TINYINT     NOT NULL DEFAULT 1,
+        updated_at BIGINT      NOT NULL,
+        CONSTRAINT push_prefs_home FOREIGN KEY (home_id) REFERENCES homes(id) ON DELETE CASCADE
+      ) ${T}`,
+    ],
+  },
+  // ---- end Web Push ----
 ];
 
 export async function initDb() {

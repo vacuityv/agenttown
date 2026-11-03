@@ -9,6 +9,7 @@ import { fetchHomeTalk, threadNode } from "./talk.js"; // chat: conversations th
 import { coin } from "./tasks.js";
 import { owner, onOwnerChange, titleFor } from "./owner.js";
 import { cliNotice, copyLine } from "./notices.js";
+import { notifyCard } from "./push.js"; // owner only: phone notifications (Web Push)
 import { el, clamp, fitCanvas, truncate, timeAgo, hhmm, BUSY, prefersReducedMotion } from "./util.js";
 
 export const kindLabel = kindName;
@@ -50,6 +51,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const timeline = el("ol", { class: "timeline" });
   const statsBox = el("div", { class: "stats" }, el("p", { class: "muted small", text: tr("tasks.loading") }));
   const showOff = el("section", { class: "card show-off", hidden: true }); // owner only: README badge snippets
+  const notify = notifyCard(id); // owner only: "Notify me on this device"
 
   const page = el("div", { class: "home-page" },
     el("section", { class: "room-col" },
@@ -62,6 +64,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       cliSlot, roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
       el("section", { class: "card" }, el("h2", { text: tr("home.residents") }), personaList),
+      notify.node,
       tasksCard,
       el("section", { class: "card" }, el("h2", { text: tr("home.last14") }), statsBox),
       el("section", { class: "card" }, el("h2", { text: tr("home.activity") }), timeline),
@@ -281,6 +284,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     badge.textContent = mine ? tr("home.ownerBadge") : "";
     renderCli();
     renderShowOff();
+    notify.setMine(mine);
   }
 
   // Owner only: a live status badge (server/discover.ts) to paste into a README; it links back to this page.
@@ -577,6 +581,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     clearTimeout(panelTimer);
     offOwner();
     offDwelling();
+    notify.destroy();
   }
 
   async function loadTasks() {

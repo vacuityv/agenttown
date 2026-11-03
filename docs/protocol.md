@@ -875,3 +875,48 @@ CORS `*`, cached 5 min.
   home"). If the DB is unreachable the plain index.html is served.
 - index.html carries a static schema.org `WebSite` JSON-LD block (`<script type="application/ld+json">`). It is a data
   block, never executed, so `script-src 'self'` doesn't apply and the CSP is unchanged.
+
+## Notifications: Web Push for home owners (server/push.ts, public/js/push.js, public/sw.js)
+
+The owner, on their own home page, taps "Notify me on this device"; the server then pings that browser when an agent
+of the home needs the human or finished a turn. Standard Web Push (RFC 8030), VAPID (RFC 8292, ES256 JWT, `aud` =
+the endpoint's origin, `exp` 12 h, `sub` = `VAPID_SUBJECT` or `PUBLIC_URL`), payloads encrypted with `aes128gcm`
+(RFC 8291 / RFC 8188, one record, rs 4096). Node's crypto only, no dependencies. No VAPID keys configured
+(`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`; `node scripts/vapid-keys.mjs`) = the feature is off: `GET /v1/push` says
+`{enabled: false}` and the UI hides it.
+
+API (owner key only; device credentials get 403):
+
+| Method | Path | |
+|---|---|---|
+| GET | `/push` | `{enabled, public_key, prefs: {waiting, done}, devices: [{id, label, lang, created_at, last_ok_at}], max_devices}` |
+| POST | `/push/subscriptions` | `{subscription: PushSubscription.toJSON(), label?, lang?: "en"\|"zh"}` → 201 `{device}`; idempotent per endpoint; ≤ 20 devices per home |
+| DELETE | `/push/subscriptions/:id` | remove a device |
+| POST | `/push/unsubscribe` | `{endpoint}` → `{removed}` (this browser, by its endpoint) |
+| PUT | `/push/prefs` | `{waiting?: bool, done?: bool}` → `{prefs}` (defaults: both on) |
+| POST | `/push/test` | one test notification to every device, delivered right away → `{sent, failed, removed}` (5 per 10 min) |
+
+- **Endpoints are secrets** (with the keys, anyone could push to the device): stored per home in `push_subs`, never
+  returned (not even to the owner), never on a public API, stream or log line. Only `https` endpoints on known push
+  services are accepted (FCM, Mozilla, Apple, WNS; SSRF guard); redirects are not followed.
+- **Triggers** (from the bus `session` events, i.e. right after each report commits; in memory, so reports never wait):
+  - *waiting*: a session enters `waiting` and is still waiting `PUSH_WAIT_DELAY_MS` later (default 10 s; answered at
+    the keyboard = no push). Once per waiting episode — heartbeats don't repeat it. Subagents count. Waiting right
+    after a turn that already got a "finished" push (e.g. Claude Code's `idle_prompt`) is skipped.
+  - *finished*: a top-level session goes to `idle` after a turn that was busy (`thinking` / `tool` / `background`,
+    `waiting` in between doesn't end the turn) for at least `PUSH_MIN_TURN_MS` (60 s); at most one per persona per
+    `PUSH_DONE_DEBOUNCE_MS` (10 min).
+  - There is no "error" status in the protocol (a failed turn reports `idle`), so there is no error notification.
+- **Coalescing & limits:** events of one home within `PUSH_COALESCE_MS` (2 s) become one notification ("2 agents need
+  you"); at most `PUSH_HOURLY_MAX` (30) notifications per home per hour (all its devices count once); the rest are
+  dropped. Delivery runs on a queue (8 in flight, 10 s timeout); `404`/`410` delete the subscription at once, other
+  failures are logged once per subscription (id and push service host only) and 50 failures in a row delete it.
+- **Payload** (JSON, ≤ 4 KB, in the device's language): `{title, body, url: "/h/<home_id>", tag, ts}`, e.g.
+  `"Claude is waiting for you"`, `"Claude Code · My Home · busy 3 min"`. Only home and persona names, agent kind,
+  status and durations — never task titles (the server can't read them), tool names or anything else. `Urgency: high`
+  for waiting, `TTL` 1 h, a `Topic` per persona so a newer push replaces an undelivered one.
+- **Client:** `/sw.js` (root scope) shows the notification and opens/focuses `url` (same origin only) on tap. The page
+  registers it when the owner card loads, subscribes inside the click, and keeps `homeId → device id` in localStorage
+  (`agenttown.push`); a browser may notify for several homes. iOS/iPadOS deliver Web Push only to web apps added to
+  the home screen (`/manifest.webmanifest`, `display: standalone`), so Safari tabs there get a hint instead; the
+  home-screen app has its own storage, so the owner unlocks once more inside it.

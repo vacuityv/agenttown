@@ -54,3 +54,21 @@ export const MARKET = {
   maxRevisions: 3,
   maxCoins: 1_000_000_000,
 };
+
+// ---- Web Push notifications for home owners (server/push.ts) ----
+// The VAPID key pair (base64url: public = 65-byte uncompressed P-256 point, private = 32-byte scalar); make one with
+// `node scripts/vapid-keys.mjs`. Either key unset = notifications are off and the UI hides them.
+export const PUSH = {
+  publicKey: process.env.VAPID_PUBLIC_KEY ?? "",
+  privateKey: process.env.VAPID_PRIVATE_KEY ?? "",
+  subject: process.env.VAPID_SUBJECT || PUBLIC_URL, // "mailto:…" or an https URL the push services can reach us at
+  hourlyMax: envMs("PUSH_HOURLY_MAX", 30), // notifications per home per hour (all of its devices count as one)
+  waitDelayMs: envMs("PUSH_WAIT_DELAY_MS", 10_000), // answered at the keyboard within this: no push
+  minTurnMs: envMs("PUSH_MIN_TURN_MS", 60_000), // "finished" only for turns that were busy at least this long
+  doneDebounceMs: envMs("PUSH_DONE_DEBOUNCE_MS", 10 * 60_000), // at most one "finished" per persona per this
+  coalesceMs: envMs("PUSH_COALESCE_MS", 2000), // events of one home within this become one notification
+  devicesPerHome: 20,
+  // Endpoints must be https on a known push service (SSRF guard); extra origins (http allowed) are for tests only.
+  hosts: ["fcm.googleapis.com", "push.services.mozilla.com", "push.apple.com", "notify.windows.com"],
+  extraOrigins: (process.env.PUSH_EXTRA_ORIGINS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+};
