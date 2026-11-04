@@ -338,7 +338,7 @@ async function releaseChecks(cfg: any) {
   assert.match(log(u1), new RegExp(`auto-update: installed CLI ${NEXT.replace(/\./g, "\\.")}`));
   m0 = await me();
   assert.equal(m0.cli.version, cli.CLI_VERSION, "hook reports carry the CLI version");
-  assert.equal(m0.cli.outdated, true);
+  assert.equal(m0.cli.outdated, false, "behind, but it updates itself: no owner notice");
   run(u1, ["report", "--persona", "Claude", "--kind", "claude-code", "--session", "upd-2", "--status", "idle"]);
   await sleep(300);
   m0 = await me();

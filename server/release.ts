@@ -163,7 +163,9 @@ export async function cliStatus(homeId: string) {
   const pool = recent.length ? recent : rows;
   const rank = (v: string) => (v === "old" ? "0.0.0" : v);
   const oldest = pool.reduce((a, b) => (newer(rank(a.cli_version), rank(b.cli_version)) ? b : a));
-  return { version: oldest.cli_version as string, seen_at: Number(oldest.cli_seen_at), latest: cliVersion, outdated: isOutdated(oldest.cli_version) };
+  // Only a CLI that can't update itself needs the owner's attention; 1.2.0+ installs the new release within hours.
+  const v = oldest.cli_version as string;
+  return { version: v, seen_at: Number(oldest.cli_seen_at), latest: cliVersion, outdated: isOutdated(v) && !selfUpdates(v) };
 }
 
 // ---- routes ----

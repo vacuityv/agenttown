@@ -445,8 +445,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     }
     for (const a of anchors) {
       if (a.ent.say && a.ent.say.until > performance.now()) drawSay(a);
-      else if (a.ent.sleeper || a.ent.pose === "sleep") drawZzz(a, t);
-      else drawSpeech(a, t);
+      else if (a.ent.pose === "sleep") drawZzz(a, t);
+      else if (!a.ent.sleeper) drawSpeech(a, t); // off duty on the sofa: the tooltip says what they're up to
     }
   }
 

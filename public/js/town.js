@@ -675,6 +675,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
 
     // homes
     const glows = [], labels = [], bubbles = [], zzz = [], smokes = [], halls = [];
+    const night = nightTime();
     const anchorAt = new Map(); // chat: "<home id>|<persona id>" → an on-screen anchor (for reply links)
     const o = owner();
     const visible = homesIn(v.x0, v.y0, v.x1, v.y1, n, 140);
@@ -710,20 +711,21 @@ export function mountTown(root, { navigate, setHeaderStats }) {
         for (const a of anchors) {
           if (a.ent.a?.persona_id && !a.ent.mini) anchorAt.set(`${e.home.id}|${a.ent.a.persona_id}`, a);
           if (a.ent.say && a.ent.say.until > t) { bubbles.push({ a, say: true }); continue; }
-          if (a.ent.sleeper || a.ent.pose === "sleep") { zzz.push([a.x + 3 * s, a.y + 2 * s, a.ent.seed]); continue; }
+          if (a.ent.pose === "sleep") { zzz.push([a.x + 3 * s, a.y + 2 * s, a.ent.seed]); continue; }
+          if (a.ent.sleeper) continue; // off duty on the sofa: no status bubble
           bubbles.push({ a, mine: o?.home.id === e.home.id, homeId: e.home.id }); // always on, no hover needed
         }
       } else if (detail) {
         placeholder(e.home.id).draw(ctx, R(X0), R(Y0), s, t, { reduced, now: t });
-        if (e.open === 0) zzz.push([X0 + plan.W * 0.75 * s, Y0 + plan.H * 0.7 * s, k]);
+        if (e.open === 0 && night) zzz.push([X0 + plan.W * 0.75 * s, Y0 + plan.H * 0.7 * s, k]);
       } else drawFootprint(ctx, plan, X0, Y0, s, e.open > 0);
-      // lights
+      // lights: an empty house only goes dark at night (by day its residents are off duty, not asleep)
       if (!plan.open) {
-        ctx.fillStyle = awake === 0 ? "rgba(8, 10, 30, 0.5)" : "rgba(255, 200, 120, 0.06)";
+        ctx.fillStyle = awake === 0 && night ? "rgba(8, 10, 30, 0.5)" : "rgba(255, 200, 120, 0.06)";
         ctx.beginPath();
         for (const [a, b, c, d] of plan.foot) ctx.rect(X0 + a * s, Y0 + b * s, (c - a) * s, (d - b) * s);
         ctx.fill();
-      } else if (awake === 0 && plan.blob) {
+      } else if (awake === 0 && night && plan.blob) {
         ctx.fillStyle = "rgba(8, 10, 30, 0.35)";
         ctx.beginPath(); plan.blob.forEach(([x, y], i) => (i ? ctx.lineTo(X0 + x * s, Y0 + y * s) : ctx.moveTo(X0 + x * s, Y0 + y * s))); ctx.closePath(); ctx.fill();
       }
