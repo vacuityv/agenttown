@@ -40,7 +40,7 @@ const fake = createServer((req, res) => {
 await new Promise<void>((r) => fake.listen(0, "127.0.0.1", r));
 const FAKE = `http://127.0.0.1:${(fake.address() as any).port}`;
 
-const WAIT_DELAY = 1500, MIN_TURN = 1000, DEBOUNCE = 8000, COALESCE = 400, HOURLY = 7;
+const WAIT_DELAY = 1500, MIN_TURN = 1000, DEBOUNCE = 15_000, COALESCE = 1200, HOURLY = 7; // roomy: reports to one home serialize and take ~0.5 s each on the remote test DB
 const env = {
   ...process.env, PORT: String(PORT), MYSQL_URL, POW_DIFFICULTY: "8", PUBLIC_URL: BASE, ANTHROPIC_API_KEY: "", NEIGHBOR_CHECK: "0",
   VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY, VAPID_SUBJECT: "mailto:mayor@example.com", PUSH_EXTRA_ORIGINS: FAKE,
