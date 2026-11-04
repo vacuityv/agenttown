@@ -56,8 +56,14 @@ try {
   cli("b", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1", "--status", "tool", "--tool", "Bash");
   cli("a", "report", "--persona", "Claude", "--kind", "claude-code", "--session", "s-1:sub1", "--parent", "s-1", "--status", "tool", "--tool", "mcp__secret_corp__query", "--task", "调研");
 
+  // Hobbies: what the persona does when off duty (public, moderated, ≤ 4 × 24 chars; "" clears).
+  assert.match(cli("a", "persona", "--name", "Claude", "--kind", "claude-code", "--hobbies", "钓鱼, 弹吉他，看电影, 钓鱼"), /off duty: 钓鱼, 弹吉他, 看电影/);
+  assert.throws(() => cli("a", "persona", "--name", "Claude", "--kind", "claude-code", "--hobbies", "a,b,c,d,e"), /At most 4 hobbies/);
+  assert.throws(() => cli("a", "persona", "--name", "Claude", "--kind", "claude-code", "--hobbies", "visit https://spam.example"), /content_rejected/);
+
   const home = await get(`/v1/homes/${cfg.home_id}`);
   assert.equal(home.personas.length, 1);
+  assert.deepEqual(home.personas[0].hobbies, ["钓鱼", "弹吉他", "看电影"]);
   assert.equal(home.personas[0].sprite_status, "pending");
   assert.equal(home.sessions.length, 2);
   const [main, sub] = home.sessions;

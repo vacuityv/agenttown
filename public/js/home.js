@@ -1,7 +1,7 @@
 // "/h/:id" — one Home, up close. Same top-down interior as the town (shared HomeSim renderer), drawn
 // bigger, with speech bubbles (task titles decrypted locally for the owner), side panel and stats.
 import { api, openStream } from "./api.js";
-import { HomeSim, statusLine, spotLabel, setHomeMeta, onDwellingChange, planFor } from "./interior.js";
+import { HomeSim, statusLine, spotLabel, activityLabel, nightTime, setHomeMeta, onDwellingChange, planFor } from "./interior.js";
 import { t as tr, kindLabel as kindName } from "./i18n.js";
 import { spriteIcon } from "./sprites.js";
 import { fetchHomeTasks, MarketUnavailable } from "./market.js";
@@ -273,7 +273,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     for (const s of sessions.values()) { open++; if (BUSY.has(s.status)) busy++; if (s.parent_id) subs++; }
     summary.textContent = open
       ? (subs ? tr("home.summarySubs", { awake: open - subs, subs, n: subs, busy }) : tr("home.summary", { awake: open, busy }))
-      : tr("home.lightsOff");
+      : tr(nightTime() ? "home.lightsOff" : "home.offDuty");
     const plan = planFor(id);
     legend.textContent = plan.art ? tr("home.legendArt") : tr("home.legend");
     dwellLine.textContent = tr("home.dwelling", { dwelling: plan.art ? tr("dw.art") : tr(`dw.${home.dwelling ?? flavorDwelling(plan)}`), style: tr(`sty.${plan.rstyle}`) });
@@ -339,7 +339,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     personaList.replaceChildren(...(items.length ? items : [el("li", { class: "muted small", text: tr("home.noResidents") })]));
   }
   function residentRow(p, x, suffix, first) {
-    const state = !x ? tr("home.pAsleep") : `${x.parent_id ? tr("town.subagent") + " · " : ""}${statusText(x)}`;
+    const state = !x ? tr(nightTime() ? "home.pAsleep" : "home.pOff") : `${x.parent_id ? tr("town.subagent") + " · " : ""}${statusText(x)}`;
     const task = x ? taskLine(x) : null;
     return el("li", { class: `${x ? "on" : "off"}${x?.parent_id ? " sub" : ""}` },
       spriteIcon(p, x?.parent_id ? 1 : 1.5),
@@ -546,7 +546,8 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     tip.replaceChildren(...[
       el("strong", { text: p?.name ?? tr("kind.other") }),
       el("span", { class: "muted", text: parent ? tr("home.subagentOf", { kind: kindLabel(p?.kind), name: personas.get(parent.persona_id)?.name ?? "…" }) : kindLabel(p?.kind) }),
-      el("span", { text: e.sleeper ? tr("home.asleepNoSession") : `${statusText(s)}${where ? tr("home.atThe", { where }) : ""}`, style: `color:${STATUS_COLOR[s.status] ?? "#c9c2e8"}` }),
+      el("span", { text: e.sleeper ? (e.target?.activity ? `${tr("home.offNoSession")} · ${activityLabel(e.target.activity)}` : tr("home.asleepNoSession"))
+        : `${statusText(s)}${where ? tr("home.atThe", { where }) : ""}${e.target?.activity ? ` · ${activityLabel(e.target.activity)}` : ""}`, style: `color:${STATUS_COLOR[s.status] ?? "#c9c2e8"}` }),
       task ? el("span", { class: task.mine ? "" : "muted", text: task.text }) : null,
       s.started_at ? el("span", { class: "muted small", text: tr("home.inFor", { a: timeAgo(s.started_at), b: timeAgo(s.last_seen) }) }) : null,
     ].filter(Boolean));

@@ -263,7 +263,7 @@ async function getHome(a: Json): Promise<ToolOut> {
   ]);
   const ps = personas.map((p) => safety.redactPersona(p as Json));
   const pname = new Map(ps.map((p) => [p.id as string, p.name as string]));
-  const residents = ps.map((p) => ({ name: p.name as string, kind: p.kind as string, appearance: p.appearance ?? null }));
+  const residents = ps.map((p) => ({ name: p.name as string, kind: p.kind as string, appearance: p.appearance ?? null, hobbies: p.hobbies ?? [] }));
   // Status and tool names only: never the task (its title is end-to-end encrypted; not even the ciphertext goes out).
   const agents = sessions.map((s) => ({
     persona: pname.get(s.persona_id) ?? null, status: s.status as string, tool: s.tool ?? null,

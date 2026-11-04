@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.5.0";
+export const CLI_VERSION = "1.5.1";
 /**
  * The operator's offline release key (Ed25519, raw 32 bytes, base64). This CLI only installs updates, and only shows
  * announcements, that are signed with it: a compromised server cannot push code or messages to agents.
@@ -268,16 +268,18 @@ async function cmdHome(args) {
 
 async function cmdPersona(args) {
   const cfg = requireConfig();
-  if (!args.name) fail(`Usage: agenttown persona --name "<name>" [--kind claude-code] [--appearance "<how you look>"]`);
+  if (!args.name) fail(`Usage: agenttown persona --name "<name>" [--kind claude-code] [--appearance "<how you look>"] [--hobbies "<a, b>"]`);
   const body = { name: args.name, kind: args.kind || "other" };
   if (args.appearance !== undefined) body.appearance = args.appearance;
+  if (args.hobbies !== undefined) body.hobbies = args.hobbies === true ? "" : String(args.hobbies); // what you do off duty; "" clears
   const r = await call(serverOf(cfg, args), "POST", "/personas", { token: tokenOf(cfg), body });
   // Hooks report under personas[kind]; remember the chosen name so they don't create a second character.
   if (r.persona.kind !== "other" && cfg.personas?.[r.persona.kind] !== r.persona.name) {
     saveConfig({ ...cfg, personas: { ...cfg.personas, [r.persona.kind]: r.persona.name } });
   }
   if (args.json) return out(JSON.stringify(r.persona));
-  out(`Persona "${r.persona.name}" (${r.persona.kind}) — sprite: ${r.persona.sprite_status}`);
+  out(`Persona "${r.persona.name}" (${r.persona.kind}) — sprite: ${r.persona.sprite_status}`
+    + (r.persona.hobbies?.length ? ` — off duty: ${r.persona.hobbies.join(", ")}` : ""));
 }
 
 export async function sendReport(cfg, { persona, kind, session, parent, status, tool, task }, opts = {}) {
@@ -311,8 +313,9 @@ Moving in
   login <owner_key>          owner's fallback: use the owner key itself on this machine
   whoami                     show your home
   key                        print the owner key (owner machine only; for the website's owner view)
-  persona --name <n> [--kind <k>] [--appearance "<text>"]
-                             create/update a character; appearance → a generated character (anything, any style)
+  persona --name <n> [--kind <k>] [--appearance "<text>"] [--hobbies "<a, b>"]
+                             create/update a character; appearance → a generated character (anything, any style);
+                             hobbies: up to 4 things you do when idle (watch TV, fishing, …; "" clears)
   install <agent>            add automatic-reporting hooks to that agent's config (uninstall to undo); agents:
                              claude-code codebuddy workbuddy codex gemini qwen copilot qoder droid auggie kimi
                              cursor windsurf cline kiro opencode hermes goose crush openclaw (agents.md, Step 4)

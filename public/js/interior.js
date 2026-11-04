@@ -33,6 +33,30 @@ import { t as tr } from "./i18n.js";
 // Localized name of an activity spot ("desk", "bookshelf", …).
 export const spotLabel = (kind) => (kind ? tr(`spot.${kind}`) : "");
 
+// ---------- off duty: idle and offline residents relax; they only go to bed at night (the viewer's local time) ----------
+export const nightTime = (d = new Date()) => d.getHours() >= 23 || d.getHours() < 7;
+const LEISURE = ["tv", "phone", "game", "read"];
+const LEISURE_MS = 40 * 60_000; // each resident picks something new every 40 minutes
+// A persona's own hobbies (persona.hobbies, free text the agent chose) get the closest prop; unknown ones a thought bubble.
+const PROPS = [
+  ["music", /music|guitar|piano|sing|song|headphone|ukulele|violin|drum|音乐|吉他|钢琴|唱|歌|耳机|乐/i],
+  ["tv", /\btv\b|movie|film|series|show|netflix|anime|电视|电影|剧|动漫|综艺/i],
+  ["game", /game|switch|console|chess|gaming|游戏|下棋|棋|打牌/i],
+  ["read", /read|book|novel|manga|comic|paper|poem|书|读|小说|漫画|论文|诗/i],
+  ["coffee", /coffee|tea|drink|latte|咖啡|茶|喝/i],
+  ["phone", /phone|scroll|social|chat|tweet|手机|刷|聊天/i],
+];
+export const propFor = (text) => PROPS.find(([, re]) => re.test(text))?.[0] ?? "dream";
+/** What this resident does on the sofa right now: { prop, label } — one of its persona's hobbies (label = their own
+ * words) or, without any, a default pastime (label null). Stable per resident for a while, different between residents. */
+export function leisureOf(id, hobbies, now = Date.now()) {
+  const n = hash32(`${id}|${Math.floor(now / LEISURE_MS)}`);
+  if (hobbies?.length) { const h = hobbies[n % hobbies.length]; return { prop: propFor(h), label: h }; }
+  return { prop: LEISURE[n % LEISURE.length], label: null };
+}
+export const activityLabel = (a) => (a ? a.label ?? tr(`fun.${a.prop}`) : "");
+const sameActivity = (a, b) => a?.prop === b?.prop && a?.label === b?.label;
+
 // ---------- seasons (a few touches follow the calendar) ----------
 export function season(d = new Date()) {
   const m = d.getMonth(), day = d.getDate();
@@ -720,8 +744,8 @@ export class HomeSim {
   relayout() {
     this.claims.clear();
     for (const e of [...this.ents.values()]) {
-      if (e.sleeper) { e.target = null; const g = this.bedGoal(e.a.persona_id, e.id); Object.assign(e, { x: g.x, y: g.y, target: g, path: [] }); }
-      else this.replan(e, false);
+      if (e.sleeper) e.target = null;
+      this.replan(e, false);
     }
   }
 
@@ -796,8 +820,9 @@ export class HomeSim {
     for (const p of this.personas.values()) {
       const id = "p:" + p.id;
       if (awake.has(p.id) || this.ents.has(id)) continue;
-      const g = this.bedGoal(p.id, id);
-      this.ents.set(id, { id, a: { id, persona_id: p.id, status: "asleep" }, x: g.x, y: g.y, path: [], pose: "sleep", facing: 1, born: animate ? performance.now() : -1e9, dying: 0, mini: false, seed: hash32(id) % 9973, sleeper: true, target: g });
+      const e = { id, a: { id, persona_id: p.id, status: "asleep" }, path: [], facing: 1, born: animate ? performance.now() : -1e9, dying: 0, mini: false, seed: hash32(id) % 9973, sleeper: true };
+      const g = this.offGoal(p.id, e);
+      this.ents.set(id, Object.assign(e, { x: g.x, y: g.y, pose: g.pose, target: g }));
     }
     for (const [id, e] of this.ents) if (e.sleeper && (awake.has(e.a.persona_id) || !this.personas.has(e.a.persona_id))) this.removeEnt(id);
   }
@@ -873,8 +898,9 @@ export class HomeSim {
       }
       const others = [...this.ents.values()].some((o) => o !== e && !o.sleeper && !o.ending && o.a.persona_id === a.persona_id);
       if (others) return { kind: "door", pose: "stand", x: fx, y: fy, then: "pop" };
-      return { ...this.bedGoal(a.persona_id, e.id), then: "sleep" };
+      return { ...this.offGoal(a.persona_id, e), then: "sleep" };
     }
+    if (e.sleeper) return this.offGoal(a.persona_id, e);
     let kind;
     if (a.status === "tool") kind = TOOL_SPOT[a.tool] ?? "desk";
     if (kind !== "desk" && kind && !["door", "rest", "bed"].includes(kind) && !plan.spots[kind]?.pts?.length) kind = "desk";
@@ -882,7 +908,7 @@ export class HomeSim {
     else if (a.status === "waiting") kind = plan.art ? "rest" : "door";
     else if (a.status === "idle") kind = a.last_seen && Date.now() - a.last_seen > IDLE_SLEEP_MS ? "bed" : "rest";
     else kind = "desk";
-    if (kind === "bed") return this.bedGoal(a.persona_id, e.id);
+    if (kind === "bed") return this.offGoal(a.persona_id, e);
     if (kind === "desk") {
       if (e.mini) { // subagents stand at the side of the parent's desk
         const p = this.ents.get(a.parent_id);
@@ -899,8 +925,18 @@ export class HomeSim {
     const pt = spot.pts[k % spot.pts.length];
     const lap = Math.floor(k / spot.pts.length);
     const pose = e.mini && spot.pose === "seat" ? "stand" : spot.pose;
-    return { kind, pose, x: pt[0] + lap * 4 + (e.mini ? 3 : 0), y: pt[1] + lap * 2 };
+    const activity = kind === "rest" && a.status === "idle" && !e.mini ? this.pastime(e) : undefined;
+    return { kind, pose, x: pt[0] + lap * 4 + (e.mini ? 3 : 0), y: pt[1] + lap * 2, activity };
   }
+  // Off duty (long idle or no open session): bed at night, else the sofa with something to do.
+  offGoal(pid, e) {
+    const spot = this.plan.spots.rest;
+    if (nightTime() || !spot?.pts?.length) return this.bedGoal(pid, e.id);
+    const k = this.claim("rest", e);
+    const pt = spot.pts[k % spot.pts.length], lap = Math.floor(k / spot.pts.length);
+    return { kind: "rest", pose: spot.pose, x: pt[0] + lap * 4, y: pt[1] + lap * 2, activity: this.pastime(e), off: true };
+  }
+  pastime(e) { return leisureOf(e.id, this.personas.get(e.a.persona_id)?.hobbies); }
 
   replan(e, animate) {
     this.release(e);
@@ -929,9 +965,16 @@ export class HomeSim {
   update(dt, now) {
     if (now - this.lastStale > 2000) {
       this.lastStale = now;
+      const night = nightTime();
       for (const e of this.ents.values()) {
-        if (e.sleeper || e.ending) continue;
-        if (e.a.status === "idle" && e.target?.kind === "rest" && e.a.last_seen && Date.now() - e.a.last_seen > IDLE_SLEEP_MS) this.replan(e, true);
+        if (e.ending) continue;
+        const g = e.target;
+        if (e.sleeper || g?.off || g?.kind === "bed") { // off duty: follow day/night, pick a new pastime now and then
+          if (night !== (g?.kind === "bed")) this.replan(e, true);
+          else if (g?.activity && !sameActivity(g.activity, this.pastime(e))) g.activity = this.pastime(e);
+          continue;
+        }
+        if (e.a.status === "idle" && g?.kind === "rest" && e.a.last_seen && Date.now() - e.a.last_seen > IDLE_SLEEP_MS) this.replan(e, true);
       }
     }
     for (const e of [...this.ents.values()]) {
@@ -1001,6 +1044,7 @@ export class HomeSim {
       const y = bed ? bed.y + 6.9 : e.pose === "seat" ? e.y - 0.5 : e.y;
       items.push({ y, draw: () => {
         const top = this.drawResident(ctx, e, persona, X0, Y0, s, t, now, reduced, bed);
+        if (e.target?.activity && !e.path.length && e.pose === e.target.pose && !e.dying) this.drawPastime(ctx, e, X0, Y0, s, t, reduced);
         if (bed && !plan.art) {
           const bi = plan.beds.indexOf(bed);
           // Tuck in from the chest down so the face stays visible on the pillow.
@@ -1012,6 +1056,51 @@ export class HomeSim {
     items.sort((a, b) => a.y - b.y);
     for (const it of items) it.draw();
     return anchors;
+  }
+
+  // A small prop in the resident's hands (phone, handheld console, book) or a TV glow; sit pose, art px.
+  drawPastime(ctx, e, X0, Y0, s, t, reduced) {
+    const k = (this.plan.charK ?? K) * (e.mini ? MINI : 1);
+    const h = 32 * k, hx = e.x + 0.1 * h, hy = e.y - 0.45 * h; // roughly where the hands are on a sitting sprite
+    const flick = reduced ? 0 : Math.floor((t + e.seed * 37) / 260) % 4;
+    const box = (x, y, w, h, col) => { ctx.fillStyle = col; ctx.fillRect(Math.round(X0 + x * s), Math.round(Y0 + y * s), Math.max(1, Math.round(w * s)), Math.max(1, Math.round(h * s))); };
+    switch (e.target.activity.prop) {
+      case "phone":
+        box(hx - 1, hy - 1, 2.5, 3.5, O);
+        box(hx - 0.5, hy - 0.5, 1.5, 2.5, ["#7fd4ff", "#a6e3ff", "#7fd4ff", "#ffd27f"][flick]);
+        break;
+      case "game":
+        box(hx - 3, hy - 0.5, 6, 3, "#2b2738");
+        box(hx - 1.5, hy, 3, 2, ["#9be37a", "#7fd4ff", "#ff9bd2", "#9be37a"][flick]);
+        box(hx - 2.6, hy + 0.6, 0.8, 0.8, "#e05a5a"); box(hx + 1.9, hy + 0.6, 0.8, 0.8, "#f3d35a");
+        break;
+      case "read":
+        box(hx - 2.5, hy - 0.5, 5, 3.5, "#8a3b2e");
+        box(hx - 2, hy, 4, 2.5, "#f3e9d2"); box(hx - 0.1, hy, 0.3, 2.5, "#c9b89a");
+        break;
+      case "music": // a little guitar across the lap
+        box(hx - 3, hy - 1, 3.5, 3.5, "#c97b3a"); box(hx - 2.2, hy - 0.2, 1.5, 1.5, "#3a2418");
+        box(hx + 0.5, hy - 2.5 + (flick % 2) * 0.3, 4, 1, "#6b4428");
+        break;
+      case "coffee":
+        box(hx - 1.5, hy - 0.5, 3, 3, "#f3e9d2"); box(hx + 1.5, hy, 1, 1.5, "#f3e9d2"); box(hx - 1, hy - 0.5, 2, 0.8, "#6b4428");
+        if (!reduced) { ctx.globalAlpha = 0.5; box(hx - 0.5 + (flick % 2), hy - 3 - (flick % 3) * 0.5, 0.8, 1.5, "#f3e9d2"); ctx.globalAlpha = 1; }
+        break;
+      case "dream": { // a thought bubble: whatever they wrote is in the tooltip
+        const bx = e.x + 0.35 * h, by = e.y - 1.25 * h;
+        box(bx - 0.5, by + 5, 1.2, 1.2, "#f3e9d2"); box(bx + 1, by + 3, 1.8, 1.8, "#f3e9d2");
+        box(bx + 2, by - 2, 7, 4.5, "#f3e9d2"); box(bx + 3, by - 2.7, 5, 6, "#f3e9d2");
+        for (let i = 0; i < 3; i++) box(bx + 3.3 + i * 1.6, by - 0.3, 0.8, 0.8, i <= flick % 3 ? "#6b4f8f" : "#c9c2e8");
+        break;
+      }
+      default: { // tv: a set on the floor in front of the sofa, its light flickering on the watcher
+        const tx = e.x - 3, ty = e.y + 9;
+        box(tx, ty, 7, 5, "#1c1828"); box(tx + 2.5, ty + 5, 2, 1.5, "#1c1828");
+        ctx.globalAlpha = reduced ? 0.12 : [0.1, 0.18, 0.13, 0.2][flick];
+        box(e.x - 0.4 * h, e.y - h, 0.8 * h, h + 9, ["#7fb8ff", "#b48bff", "#7fd4ff", "#ffe08a"][flick]);
+        ctx.globalAlpha = 1;
+      }
+    }
   }
 
   drawResident(ctx, e, persona, X0, Y0, s, t, now, reduced, bed) {

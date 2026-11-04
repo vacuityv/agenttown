@@ -29,6 +29,7 @@ const sql = {
     INSERT INTO personas (id, home_id, name, kind, created_at) VALUES (?, ?, ?, ?, ?) AS new
     ON DUPLICATE KEY UPDATE kind = new.kind`,
   setAppearance: "UPDATE personas SET appearance = ?, sprite_status = 'pending' WHERE id = ?",
+  setHobbies: "UPDATE personas SET hobbies = ? WHERE id = ?",
 
   sessionByKeyForUpdate: "SELECT * FROM sessions WHERE home_id = ? AND ext_key = ? FOR UPDATE",
   sessionByKey: "SELECT * FROM sessions WHERE home_id = ? AND ext_key = ?",
@@ -89,6 +90,7 @@ export const publicPersona = (p: Row) => ({
   name: p.name,
   kind: p.kind,
   appearance: p.appearance,
+  hobbies: p.hobbies ? JSON.parse(p.hobbies) : [],
   sprite: p.sprite ? JSON.parse(p.sprite) : null,
   sprite_status: p.sprite_status,
   sprite_error: p.sprite_status === "failed" ? (p.sprite_error ?? null) : null,
@@ -227,12 +229,13 @@ async function ensurePersona(c: Q, homeId: string, name: string, kind: string, e
   return p;
 }
 
-export async function upsertPersona(homeId: string, name: string, kind: string, appearance: string | null) {
+export async function upsertPersona(homeId: string, name: string, kind: string, appearance: string | null, hobbies?: string[]) {
   const emits: BusEvent[] = [];
   const out = await tx(async (c) => {
     emits.length = 0;
     const p = await ensurePersona(c, homeId, name, kind, emits);
     if (appearance !== null && appearance !== p.appearance) await run(c, sql.setAppearance, [appearance, p.id]);
+    if (hobbies !== undefined) await run(c, sql.setHobbies, [hobbies.length ? JSON.stringify(hobbies) : null, p.id]);
     return publicPersona((await one(c, sql.personaById, [homeId, p.id]))!);
   }, { retryDuplicate: true });
   for (const e of emits) bus.emit(e);

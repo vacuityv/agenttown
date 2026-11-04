@@ -448,6 +448,12 @@ const MIGRATIONS: { version: number; statements: string[] }[] = [
     ],
   },
   {
+    version: 852, // what a persona likes to do when off duty (public, moderated; a JSON array of short texts)
+    statements: [
+      "ALTER TABLE personas ADD COLUMN hobbies VARCHAR(255) NULL",
+    ],
+  },
+  {
     version: 851, // daily funnel counters (server/stats.ts)
     statements: [
       `CREATE TABLE IF NOT EXISTS funnel_stats (

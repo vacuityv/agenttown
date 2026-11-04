@@ -206,6 +206,15 @@ api.put("/home/look", requireAuth, async (c) => {
   return c.json({ home: await store.setLook(home.id, look) });
 });
 
+// What a persona does when off duty (watching TV, fishing, …): up to 4 short texts; [] or "" clears them.
+function hobbyList(v: unknown): string[] {
+  const raw = typeof v === "string" ? v.split(/[,，、;\n]/) : Array.isArray(v) ? v : null;
+  if (!raw) throw new ApiError(400, "bad_hobbies", "hobbies must be a list of short texts (or one comma-separated string).");
+  const list = [...new Set(raw.map((x) => (typeof x === "string" ? cleanText(x, 24) : null)).filter((x): x is string => !!x))];
+  if (list.length > 4) throw new ApiError(400, "bad_hobbies", "At most 4 hobbies (each 1-24 chars).");
+  return list;
+}
+
 function personaFields(p: any) {
   const name = cleanText(p?.name, 32);
   const kind = cleanText(p?.kind, 24)?.toLowerCase().replace(/[^a-z0-9-]/g, "-") || "other";
@@ -220,8 +229,9 @@ api.post("/personas", requireAuth, async (c) => {
   const { name, kind } = personaFields(b);
   stats.bump(`persona:${/^[a-z0-9-]{1,24}$/.test(kind) ? kind : "other"}`);
   const appearance = b.appearance === undefined ? null : cleanText(b.appearance, 200);
-  assertAllowed("persona", name, appearance);
-  return c.json({ persona: await store.upsertPersona(home.id, name, kind, appearance) });
+  const hobbies = b.hobbies === undefined ? undefined : hobbyList(b.hobbies);
+  assertAllowed("persona", name, appearance, ...(hobbies ?? []));
+  return c.json({ persona: await store.upsertPersona(home.id, name, kind, appearance, hobbies) });
 });
 
 api.post("/report", requireAuth, async (c) => {

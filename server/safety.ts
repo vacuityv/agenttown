@@ -88,7 +88,7 @@ export function redactHome<T extends Record<string, any>>(h: T): T {
 
 export function redactPersona<T extends Record<string, any>>(p: T): T {
   if (!p || !hidden.persona.has(p.id)) return p;
-  return nullArt({ ...p, name: HIDDEN_NAME, appearance: null, sprite_error: null, hidden: true }) as T;
+  return nullArt({ ...p, name: HIDDEN_NAME, appearance: null, hobbies: [], sprite_error: null, hidden: true }) as T;
 }
 
 /** Says of hidden homes, hidden personas, and hidden says are omitted entirely. */
@@ -235,7 +235,7 @@ function contentOf(kind: Kind, r: Row | undefined) {
   const base = { hidden_at: r.hidden_at ?? null, hidden_reason: r.hidden_reason ?? null };
   switch (kind) {
     case "home": return { id: r.id, name: r.name, description: r.description, ...base };
-    case "persona": return { id: r.id, home_id: r.home_id, name: r.name, kind: r.kind, appearance: r.appearance, ...base };
+    case "persona": return { id: r.id, home_id: r.home_id, name: r.name, kind: r.kind, appearance: r.appearance, hobbies: r.hobbies, ...base };
     case "say": return { id: String(r.id), home_id: r.home_id, persona_id: r.persona_id, text: r.text, ts: r.ts, ...base };
     case "tombstone": return {
       id: r.id, home_id: r.home_id, name: r.name, home_name: r.home_name, appearance: r.appearance, epitaph: r.epitaph, ...base,
