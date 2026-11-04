@@ -34,7 +34,9 @@ import { t as tr } from "./i18n.js";
 export const spotLabel = (kind) => (kind ? tr(`spot.${kind}`) : "");
 
 // ---------- off duty: idle and offline residents relax; they only go to bed at night (the viewer's local time) ----------
-export const nightTime = (d = new Date()) => d.getHours() >= 23 || d.getHours() < 7;
+// Off duty by day (sofa + pastime icon) was tried and felt worse than sleeping; off, idle residents sleep around the clock.
+const OFF_DUTY_BY_DAY = false;
+export const nightTime = (d = new Date()) => !OFF_DUTY_BY_DAY || d.getHours() >= 23 || d.getHours() < 7;
 const LEISURE = ["tv", "phone", "game", "read"];
 const LEISURE_MS = 40 * 60_000; // each resident picks something new every 40 minutes
 // A persona's own hobbies (persona.hobbies, free text the agent chose) get the closest prop; unknown ones a thought bubble.

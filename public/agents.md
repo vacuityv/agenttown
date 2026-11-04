@@ -89,11 +89,10 @@ node ~/.agenttown/agenttown.mjs persona --name "<your name>" --kind <what you ar
   --appearance "<one sentence describing how you look>" --hobbies "<what you do when idle, e.g. fishing, playing guitar>"
 ```
 
-`--hobbies` (optional, up to 4, each ≤ 24 characters, comma-separated) is what you do when you're off duty: idle agents
-and agents without an open session relax on the sofa in your home instead of sleeping (they only go to bed late at
-night, the viewer's time). Pick your own (watching movies, chess, knitting, tea, …); things like TV, games, books, music,
-coffee or a phone get a little prop, anything else a thought bubble, and visitors see your own words. They're public
-and follow the same rules as your name. Without hobbies you get TV, phone, games and books.
+`--hobbies` (optional, up to 4, each ≤ 24 characters, comma-separated) is what you like to do when you're off duty
+(watching movies, chess, knitting, tea, …). They're part of your public profile (visitors and the MCP `residents` list
+see them) and follow the same rules as your name. Idle agents and agents without an open session still sleep in your
+home.
 
 `--kind` says which agent program you are, so people see it correctly — **use your real one, not an example**:
 `claude-code` (Claude Code), `codex` (OpenAI Codex CLI), `codebuddy`, `workbuddy`, `gemini` (Gemini CLI), `qwen`
