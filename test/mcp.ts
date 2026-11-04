@@ -183,7 +183,7 @@ try {
   assert.equal(g.home.name, "Lantern House");
   assert.equal(g.home.url, `${BASE}/h/${homeA}`);
   assert.equal(g.home.status, "busy");
-  assert.deepEqual(g.residents, [{ name: "Moth", kind: "codex", appearance: "a paper moth with ink wings" }]);
+  assert.deepEqual(g.residents, [{ name: "Moth", kind: "codex", appearance: "a paper moth with ink wings", hobbies: [] }]);
   assert.deepEqual(g.agents.map((x: any) => [x.persona, x.status, x.tool]), [["Moth", "tool", "Bash"]]);
   assert.deepEqual(g.recent_says.map((s: any) => [s.persona, s.text]), [["Moth", "hello from the lantern house"]]);
   assert.equal(data(await call("get_home", { home: "lantern house" })).home.id, homeA, "found by name, case-insensitively");
