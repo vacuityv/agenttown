@@ -55,6 +55,24 @@ export function leisureOf(id, hobbies, now = Date.now()) {
   return { prop: LEISURE[n % LEISURE.length], label: null };
 }
 export const activityLabel = (a) => (a ? a.label ?? tr(`fun.${a.prop}`) : "");
+const FUN_ICON = { tv: "📺", phone: "📱", game: "🎮", read: "📖", music: "🎵", coffee: "☕", dream: "💭" };
+/** Off-duty resident sitting at its pastime (not walking there, not in bed). */
+export const atPastime = (e) => !!(e?.sleeper && e.pose !== "sleep" && e.target?.activity && !e.path?.length && e.pose === e.target.pose);
+/** A gently bobbing icon over an off-duty resident — the daytime counterpart of "z z z", legible at any zoom (screen px). */
+export function drawFun(ctx, x, y, prop, seed, t, reduced, size) {
+  const bob = reduced ? 0 : Math.sin(t / 600 + (seed % 100)) * size * 0.12;
+  const r = size * 0.72, cx = x + size * 0.6, cy = y - size * 0.55 + bob;
+  ctx.save();
+  ctx.globalAlpha = 0.92;
+  ctx.fillStyle = "rgba(255, 248, 236, 0.92)";
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx - r * 0.75, cy + r * 0.85, r * 0.18, 0, 7); ctx.fill(); // little tail toward the head
+  ctx.globalAlpha = 1;
+  ctx.font = `${Math.round(size * 0.85)}px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(FUN_ICON[prop] ?? FUN_ICON.dream, cx, cy + size * 0.04);
+  ctx.restore();
+}
 const sameActivity = (a, b) => a?.prop === b?.prop && a?.label === b?.label;
 
 // ---------- seasons (a few touches follow the calendar) ----------

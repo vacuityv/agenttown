@@ -2,7 +2,7 @@
 // down into each roofless home and see its residents living inside. Only homes in/near the viewport are
 // fetched (/v1/town) and simulated. Also: the village square(s), ponds, groves and the cemetery.
 import { api, fetchWorld, openStream } from "./api.js";
-import { HomeSim, statusLine, drawFootprint, onFootprint, setDwelling, setHomeMeta, onDwellingChange, nightTime } from "./interior.js";
+import { HomeSim, statusLine, drawFootprint, onFootprint, setDwelling, setHomeMeta, onDwellingChange, nightTime, atPastime, drawFun } from "./interior.js";
 import { RENDER_STYLES } from "./paint.js";
 import {
   CHUNK_PX, tileSize, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
@@ -674,7 +674,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     if (vspots) drawVisitorsPass(false);
 
     // homes
-    const glows = [], labels = [], bubbles = [], zzz = [], smokes = [], halls = [];
+    const glows = [], labels = [], bubbles = [], zzz = [], fun = [], smokes = [], halls = [];
     const night = nightTime();
     const anchorAt = new Map(); // chat: "<home id>|<persona id>" → an on-screen anchor (for reply links)
     const o = owner();
@@ -712,7 +712,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
           if (a.ent.a?.persona_id && !a.ent.mini) anchorAt.set(`${e.home.id}|${a.ent.a.persona_id}`, a);
           if (a.ent.say && a.ent.say.until > t) { bubbles.push({ a, say: true }); continue; }
           if (a.ent.pose === "sleep") { zzz.push([a.x + 3 * s, a.y + 2 * s, a.ent.seed]); continue; }
-          if (a.ent.sleeper) continue; // off duty on the sofa: no status bubble
+          if (a.ent.sleeper) { if (atPastime(a.ent)) fun.push([a.x, a.y, a.ent.target.activity.prop, a.ent.seed]); continue; } // off duty: what they're up to, not a status bubble
           bubbles.push({ a, mine: o?.home.id === e.home.id, homeId: e.home.id }); // always on, no hover needed
         }
       } else if (detail) {
@@ -796,6 +796,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       ctx.font = FONT(Math.max(6, (3 * s) / dpr + 4), 700);
       ctx.fillText("z", zx + 8 * dpr + ph * 4 * dpr, zy - 10 * dpr - ph * 10 * dpr);
     }
+    for (const [fx, fy, prop, seed] of fun) drawFun(ctx, fx, fy, prop, seed, t, reduced, Math.max(20 * dpr, Math.min(30 * dpr, 5 * s)));
     // chat: a reply draws a faint dotted line to whoever it answers, for a few seconds, when both are on screen
     for (const b of bubbles) {
       const r = b.say && b.a.ent.say.reply;

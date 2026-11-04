@@ -1,7 +1,7 @@
 // "/h/:id" — one Home, up close. Same top-down interior as the town (shared HomeSim renderer), drawn
 // bigger, with speech bubbles (task titles decrypted locally for the owner), side panel and stats.
 import { api, openStream } from "./api.js";
-import { HomeSim, statusLine, spotLabel, activityLabel, nightTime, setHomeMeta, onDwellingChange, planFor } from "./interior.js";
+import { HomeSim, statusLine, spotLabel, activityLabel, nightTime, atPastime, drawFun, setHomeMeta, onDwellingChange, planFor } from "./interior.js";
 import { t as tr, kindLabel as kindName } from "./i18n.js";
 import { spriteIcon } from "./sprites.js";
 import { fetchHomeTasks, MarketUnavailable } from "./market.js";
@@ -447,6 +447,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     for (const a of anchors) {
       if (a.ent.say && a.ent.say.until > performance.now()) drawSay(a);
       else if (a.ent.pose === "sleep") drawZzz(a, t);
+      else if (atPastime(a.ent)) drawFun(ctx, a.x, a.y, a.ent.target.activity.prop, a.ent.seed, t, reduced, 28 * dpr);
       else if (!a.ent.sleeper) drawSpeech(a, t); // off duty on the sofa: the tooltip says what they're up to
     }
   }
