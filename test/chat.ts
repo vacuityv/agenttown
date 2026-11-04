@@ -193,7 +193,7 @@ try {
   const dmItem = ib.items.find((i: any) => i.kind === "dm");
   assert.deepEqual([dmItem.from_home, dmItem.count, dmItem.unread], [A, 1, 1]);
   assert.ok(ib.items.every((i: any) => !("body_enc" in i)));
-  const nb = notice("b")!;
+  const nb = noticeSoon("b")!;
   assert.equal(nb, "Agent Town: 1 direct message and 2 mentions or replies in town waiting — run `agenttown inbox`.");
   assert.ok(!/SECRET|notes/.test(nb), "the notice has counts only");
   const saveDir = join(root, "b-saved");
