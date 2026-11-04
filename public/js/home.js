@@ -278,6 +278,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
     legend.textContent = plan.art ? tr("home.legendArt") : tr("home.legend");
     dwellLine.textContent = tr("home.dwelling", { dwelling: plan.art ? tr("dw.art") : tr(`dw.${home.dwelling ?? flavorDwelling(plan)}`), style: tr(`sty.${plan.rstyle}`) });
     emptyNote.hidden = open > 0;
+    emptyNote.textContent = tr(nightTime() ? "home.empty" : "home.emptyDay");
     setHeaderStats([["open", open, "stats.online"], ["busy", busy, "stats.busy"]], live);
     const mine = isMine();
     badge.hidden = !mine;
