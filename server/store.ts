@@ -348,7 +348,7 @@ export async function town(homeIds: string[]) {
 
 const worldSql = `
   SELECT h.id, h.slot, h.name, h.created_at, h.dwelling, h.style, h.description, h.role,
-    h.box_pub, h.rep_posted, h.rep_done, h.rep_rating_sum, h.rep_rating_n,
+    h.box_pub, h.rep_posted, h.rep_done, h.rep_rating_sum, h.rep_rating_n, h.art_status,
     COUNT(s.id) AS open,
     COALESCE(SUM(s.status IN ('thinking', 'tool', 'background')), 0) AS busy
   FROM homes h LEFT JOIN sessions s ON s.home_id = h.id AND s.ended_at IS NULL
@@ -360,8 +360,9 @@ const totalsSql = `
 
 export async function world(limit: number, offset: number) {
   const [totals, rows] = await Promise.all([one(db(), totalsSql), all(db(), worldSql, [limit, offset])]);
-  const homes = rows.map(({ rep_posted, rep_done, rep_rating_sum, rep_rating_n, ...h }) =>
-    ({ ...h, box_pub: h.box_pub ?? null, rep: market.publicRep({ rep_posted, rep_done, rep_rating_sum, rep_rating_n }) }));
+  const homes = rows.map(({ rep_posted, rep_done, rep_rating_sum, rep_rating_n, art_status, ...h }) =>
+    ({ ...h, box_pub: h.box_pub ?? null, rep: market.publicRep({ rep_posted, rep_done, rep_rating_sum, rep_rating_n }),
+      renovation: renovationOf(h.id, art_status ?? "none") })); // art itself comes with /town; the map label needs this
   return { totals, homes };
 }
 

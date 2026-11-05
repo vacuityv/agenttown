@@ -365,6 +365,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       const r = await api(`/town?ids=${ids.map(encodeURIComponent).join(",")}`);
       for (const h of r.homes) {
         applyMeta(h);
+        if ("renovation" in h && byId.has(h.id)) byId.get(h.id).home.renovation = h.renovation;
         let v = sims.get(h.id);
         if (!v) { v = { sim: new HomeSim(h.id), loadedAt: 0 }; sims.set(h.id, v); }
         v.sim.setPersonas(demoSprites ? h.personas.map((p) => (demoSprites[p.name] ? { ...p, sprite: demoSprites[p.name] } : p)) : h.personas);
