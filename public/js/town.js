@@ -2,7 +2,7 @@
 // down into each roofless home and see its residents living inside. Only homes in/near the viewport are
 // fetched (/v1/town) and simulated. Also: the village square(s), ponds, groves and the cemetery.
 import { api, fetchWorld, openStream } from "./api.js";
-import { HomeSim, statusLine, drawFootprint, onFootprint, setDwelling, setHomeMeta, onDwellingChange, nightTime, atPastime, drawFun } from "./interior.js";
+import { HomeSim, statusLine, drawFootprint, onFootprint, setDwelling, setHomeMeta, onDwellingChange, nightTime, atPastime, drawFun, renovationLabel } from "./interior.js";
 import { RENDER_STYLES } from "./paint.js";
 import {
   CHUNK_PX, tileSize, homeCenter, homeLayout, homesIn, bindHomes, chunkImage, homeGround, homeSlot, featuresUpTo, setFeatures,
@@ -862,7 +862,8 @@ export function mountTown(root, { navigate, setHeaderStats }) {
     for (const [e, lx, ly, hall] of labels) {
       ctx.font = FONT(11);
       const text = hall ? tr("town.hall") : truncate(e.home.name, cam.zoom >= 2 ? 28 : 18);
-      const sub = cam.zoom >= 0.8 ? (e.open ? tr("town.labelLine", { open: e.open, busy: e.busy }) : tr(nightTime() ? "town.labelAsleep" : "town.labelOff")) : "";
+      const reno = renovationLabel(e.home); // renovating: shown at every zoom, it's news
+      const sub = reno || (cam.zoom >= 0.8 ? (e.open ? tr("town.labelLine", { open: e.open, busy: e.busy }) : tr(nightTime() ? "town.labelAsleep" : "town.labelOff")) : "");
       const tw = ctx.measureText(text).width;
       ctx.font = FONT(9, 500);
       const sw = sub ? ctx.measureText(sub).width : 0;
@@ -874,7 +875,7 @@ export function mountTown(root, { navigate, setHeaderStats }) {
       ctx.fillText(text, lx, ly + dpr);
       if (sub) {
         ctx.font = FONT(9, 500);
-        ctx.fillStyle = e.busy ? "#ffdf9e" : e.open ? "#8bd3c7" : "#9a8fb5";
+        ctx.fillStyle = reno ? "#ffb86b" : e.busy ? "#ffdf9e" : e.open ? "#8bd3c7" : "#9a8fb5";
         ctx.fillText(sub, lx, ly + 12 * dpr);
       }
     }

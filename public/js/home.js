@@ -1,7 +1,7 @@
 // "/h/:id" — one Home, up close. Same top-down interior as the town (shared HomeSim renderer), drawn
 // bigger, with speech bubbles (task titles decrypted locally for the owner), side panel and stats.
 import { api, openStream } from "./api.js";
-import { HomeSim, statusLine, spotLabel, activityLabel, nightTime, atPastime, drawFun, setHomeMeta, onDwellingChange, planFor } from "./interior.js";
+import { HomeSim, statusLine, spotLabel, activityLabel, nightTime, atPastime, drawFun, renovationNow, setHomeMeta, onDwellingChange, planFor } from "./interior.js";
 import { t as tr, kindLabel as kindName } from "./i18n.js";
 import { spriteIcon } from "./sprites.js";
 import { fetchHomeTasks, MarketUnavailable } from "./market.js";
@@ -40,6 +40,20 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
   const tasksCard = el("section", { class: "card", hidden: true }, el("h2", { text: tr("home.tasks") }), tasksList);
   const descr = el("p", { class: "home-descr", hidden: true });
   const dwellLine = el("span", { class: "muted dwell-line" });
+  // Renovation: a new look is being drawn (queue position / progress bar), refreshed every second while it lasts.
+  const renoText = el("span", { class: "small" }), renoFill = el("span", { class: "reno-fill" });
+  const renoBox = el("div", { class: "reno", hidden: true }, renoText, el("span", { class: "reno-bar" }, renoFill));
+  const mins = (ms) => (ms < 60_000 ? tr("reno.secs", { n: Math.round(ms / 1000 / 10) * 10 || 10 }) : tr("reno.mins", { n: Math.round(ms / 60_000) }));
+  function renderReno() {
+    const r = home && renovationNow(home);
+    renoBox.hidden = !r;
+    if (!r) return;
+    renoFill.style.width = `${r.state === "building" ? r.pct : r.state === "done" ? 100 : 0}%`;
+    renoText.textContent = r.state === "building" ? tr("reno.detailBuilding", { left: mins(r.leftMs) })
+      : r.state === "done" ? tr("reno.detailDone")
+      : tr("reno.detailQueued", { ahead: r.ahead ? tr("reno.detailAhead", { n: r.ahead }) : "", min: Math.max(1, Math.round(r.etaMs / 60_000)) });
+  }
+  setInterval(renderReno, 1000);
   const badge = el("span", { class: "owner-badge", hidden: true });
   const cliSlot = el("div", { class: "cli-slot" }); // owner only: "your agent runs an old CLI"
   const canvas = el("canvas", { class: "room-canvas", role: "img", "aria-label": tr("home.aria") });
@@ -59,7 +73,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
         // One compact row: ← town · name · dwelling/style · awake/busy · owner badge · report; description below if any.
         el("div", { class: "room-head-row" },
           el("a", { href: "/", class: "back", onclick: (e) => { e.preventDefault(); navigate("/"); } }, tr("home.back")),
-          title, dwellLine, summary, badge),
+          title, dwellLine, renoBox, summary, badge),
         descr),
       cliSlot, roomWrap, emptyNote, legend),
     el("aside", { class: "side" },
@@ -276,6 +290,7 @@ export function mountHome(root, { id, navigate, setHeaderStats }) {
       : tr(nightTime() ? "home.lightsOff" : "home.offDuty");
     const plan = planFor(id);
     legend.textContent = plan.art ? tr("home.legendArt") : tr("home.legend");
+    renderReno();
     dwellLine.textContent = tr("home.dwelling", { dwelling: plan.art ? tr("dw.art") : tr(`dw.${home.dwelling ?? flavorDwelling(plan)}`), style: tr(`sty.${plan.rstyle}`) });
     emptyNote.hidden = open > 0;
     emptyNote.textContent = tr(nightTime() ? "home.empty" : "home.emptyDay");

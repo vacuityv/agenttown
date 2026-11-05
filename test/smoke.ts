@@ -129,8 +129,11 @@ try {
 
   // Dwelling look: CLI sets it (no API key here, so it stays pending), same look again is a no-op, "" clears.
   assert.equal((await get(`/v1/homes/${cfg.home_id}`)).home.art_status, "none");
-  assert.match(cli("a", "home", "--look", "a treehouse with <b>lanterns</b>"), /dwelling art: pending/);
+  assert.match(cli("a", "home", "--look", "a treehouse with <b>lanterns</b>"), /dwelling art: pending\nRenovation queued/);
   let hv = (await get(`/v1/homes/${cfg.home_id}`)).home;
+  assert.equal(hv.renovation.state, "queued", "renovation progress is public while the new look is drawn");
+  assert.ok(hv.renovation.eta_ms > 0);
+  assert.match(cli("a", "home"), /Renovation queued/);
   assert.equal(hv.look, "a treehouse with <b>lanterns</b>"); // stored as text; clients render it as text
   assert.equal(hv.art, null);
   assert.equal(hv.art_error, null);
@@ -145,6 +148,7 @@ try {
   hv = (await get(`/v1/homes/${cfg.home_id}`)).home;
   assert.equal(hv.look, null);
   assert.equal(hv.art_status, "none");
+  assert.equal(hv.renovation, null);
   assert.equal((await fetch(`${BASE}/v1/home/look`, { method: "PUT", body: "{}" })).status, 401);
 
   console.log("smoke: all checks passed");

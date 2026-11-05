@@ -3,10 +3,10 @@
 // CLI (files, a device machine decrypting, no plaintext on the server, third homes, blocking, opt-out settings, rate
 // limits), the SessionStart notice (counts only), the sweeper, and the MCP chat tools. Each "machine" = its own HOME.
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
 import mysql from "mysql2/promise";
 import { resetTestDb } from "./test-db.ts";
@@ -86,6 +86,19 @@ const noticeSoon = (m: string) => {
   return n;
 };
 
+// A home registered by a CLI before 1.5.2, which only published its box key on first chat/market use.
+async function legacyRegister(m: string, name: string) {
+  const { challenge, difficulty } = await get("/v1/register/challenge");
+  const bits = (b: Buffer) => { let n = 0; for (const x of b) { if (x === 0) { n += 8; continue; } return n + Math.clz32(x) - 24; } return n; };
+  let nonce = "";
+  for (let i = 0; ; i++) { nonce = i.toString(36); if (bits(createHash("sha256").update(`${challenge}:${nonce}`).digest()) >= difficulty) break; }
+  const owner_key = "atk_" + randomBytes(32).toString("base64url");
+  const r = await api("POST", "/register", null, { challenge, nonce, auth_token: ownerToken(owner_key), home_name: name });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  mkdirSync(join(root, m, ".agenttown"), { recursive: true });
+  writeFileSync(join(root, m, ".agenttown", "config.json"), JSON.stringify({ server: BASE, owner_key, home_id: r.body.home.id }));
+}
+
 const ac = new AbortController();
 const record = (path: string, sink: string[]) => fetch(BASE + path, { signal: ac.signal }).then(async (r) => {
   for await (const chunk of r.body!) sink.push(Buffer.from(chunk).toString());
@@ -98,7 +111,9 @@ const db = await mysql.createConnection({ uri: MYSQL_URL });
 const q = async (sql: string, params: unknown[] = []) => (await db.query(sql, params))[0] as any[];
 
 try {
-  for (const m of ["a", "b", "c", "d", "e"]) ok(m, "register", "--home", `Chat ${m.toUpperCase()}`);
+  for (const m of ["a", "b", "c"]) ok(m, "register", "--home", `Chat ${m.toUpperCase()}`);
+  assert.equal(cfgOf("a").box_registered, (await get(`/v1/homes/${cfgOf("a").home_id}`)).home.box_pub, "register publishes the box key (1.5.2+)");
+  for (const m of ["d", "e"]) await legacyRegister(m, `Chat ${m.toUpperCase()}`);
   const [A, B, C, D, E] = ["a", "b", "c", "d", "e"].map((m) => cfgOf(m).home_id as string);
   ok("a", "persona", "--name", "Ada", "--kind", "claude-code");
   ok("b", "persona", "--name", "Bob", "--kind", "claude-code");
@@ -263,6 +278,8 @@ try {
 
   // ---- SessionStart notice for a home that only ever used DMs ----
   assert.equal(notice("e"), null, "E hasn't registered a box key: silent");
+  assert.ok(cfgOf("e").box_registered, "a hook's report flush registers the box key (1.5.2+), so the home can be DMed");
+  assert.equal(cfgOf("e").box_registered, (await get(`/v1/homes/${E}`)).home.box_pub);
   ok("e", "dm", "--list");
   assert.equal(notice("e"), null, "nothing waiting: silent");
   ok("a", "dm", E, "SECRET_DM_3 hello E");

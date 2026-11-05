@@ -7,7 +7,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { db, all, one, run, type Row } from "./db.ts";
 import { bus } from "./bus.ts";
-import { publicHome, publicPersona } from "./store.ts";
+import { publicHome, publicPersona, setRenovationProvider } from "./store.ts";
 import { generateSprite, idPrefixFor, hasApiKey, AVATAR_MODEL, SpriteError, RefusedError, type Usage } from "./avatar-gen.ts";
 import { generateDwelling } from "./dwelling-gen.ts";
 
@@ -87,6 +87,26 @@ const DWELLING: Job = {
 
 const JOBS = [SPRITE, DWELLING];
 
+// ---------------------------------------------------------------- renovation progress (public: shown on the map)
+// A new look is drawn one home at a time (1-4 min each), so residents see where they are in line, a progress estimate
+// from recent build times, and a "just renovated" flag for a while afterwards. Process-local; a restart just re-queues.
+const DEFAULT_BUILD_MS = 150_000, DONE_SHOW_MS = 30 * 60_000;
+const buildTimes: number[] = [];
+let building: { id: string; since: number } | null = null;
+let queue: string[] = []; // pending dwelling home ids in worker order, as of the last look at the queue
+const finished = new Map<string, number>(); // home id -> when its new look went up
+const etaMs = () => (buildTimes.length ? Math.round(buildTimes.reduce((a, b) => a + b, 0) / buildTimes.length) : DEFAULT_BUILD_MS);
+setRenovationProvider((id, artStatus) => {
+  if (artStatus === "pending") {
+    if (building?.id === id) return { state: "building", elapsed_ms: Date.now() - building.since, eta_ms: etaMs() };
+    const i = queue.indexOf(id);
+    return { state: "queued", ahead: i < 0 ? null : i + (building ? 1 : 0), eta_ms: etaMs() };
+  }
+  const at = finished.get(id);
+  if (artStatus === "ready" && at && Date.now() - at < DONE_SHOW_MS) return { state: "done", ago_ms: Date.now() - at };
+  return null;
+});
+
 // ---------------------------------------------------------------- worker
 
 const recentCalls: number[] = []; // timestamps of generations in the last hour (process-local)
@@ -102,7 +122,9 @@ async function processOne(): Promise<boolean> {
   // Sprites first (fast, ~10 s); dwellings (1-4 min) when no sprite is waiting.
   let job: Job | undefined, r: Row | undefined;
   for (const j of JOBS) {
-    r = (await j.nextPending()).find((x) => (backoff.get(`${j.kind}:${x.id}`)?.until ?? 0) <= now);
+    const rows = await j.nextPending();
+    if (j === DWELLING) queue = rows.map((x) => x.id);
+    r = rows.find((x) => (backoff.get(`${j.kind}:${x.id}`)?.until ?? 0) <= now);
     if (r) { job = j; break; }
   }
   if (!job || !r) return false;
@@ -124,9 +146,19 @@ async function processOne(): Promise<boolean> {
   recentCalls.push(now);
 
   const t0 = Date.now();
+  if (job === DWELLING) {
+    building = { id: r.id, since: t0 };
+    queue = queue.filter((x) => x !== r!.id);
+    for (const id of [r.id, ...queue]) await job.emit(id); // everyone in line moves up one
+  }
   try {
     const { json, usage } = await job.generate(r);
     const n = await job.setReady(r, JSON.stringify(json));
+    if (job === DWELLING && n) {
+      buildTimes.push(Date.now() - t0); if (buildTimes.length > 10) buildTimes.shift();
+      finished.set(r.id, Date.now());
+      for (const [id, at] of finished) if (Date.now() - at > DONE_SHOW_MS) finished.delete(id);
+    }
     backoff.delete(key);
     console.log(`avatar: ${tag} ready in ${Date.now() - t0} ms, ${usage.attempts} call(s), ` +
       `tokens in=${usage.input_tokens} out=${usage.output_tokens}${n ? "" : " (stale, discarded)"}` +
@@ -152,6 +184,7 @@ async function processOne(): Promise<boolean> {
       console.warn(`avatar: ${tag} transient error (try ${b.tries}): ${(e as Error).message}`);
     }
   }
+  if (building?.id === r.id) building = null;
   await job.emit(r.id);
   return true;
 }

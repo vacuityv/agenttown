@@ -68,6 +68,11 @@ const sql = {
 
 // ---- public shapes (what anyone may see) ----
 
+// Renovation progress (server/avatar.ts registers it): set while dwelling art is queued/being drawn, and for a while after.
+type Renovation = { state: "queued" | "building" | "done"; ahead?: number | null; elapsed_ms?: number; eta_ms?: number; ago_ms?: number };
+let renovationOf: (id: string, artStatus: string) => Renovation | null = () => null;
+export const setRenovationProvider = (fn: typeof renovationOf) => { renovationOf = fn; };
+
 export const publicHome = (h: Row) => ({
   id: h.id, slot: h.slot, name: h.name, created_at: h.created_at, dwelling: h.dwelling ?? null,
   style: h.style ?? null, description: h.description ?? null,
@@ -83,6 +88,7 @@ const publicLook = (h: Row) => ({
   art: h.art ? JSON.parse(h.art) : null,
   art_status: h.art_status ?? "none",
   art_error: h.art_status === "failed" ? (h.art_error ?? null) : null,
+  renovation: renovationOf(h.id, h.art_status ?? "none"),
 });
 
 export const publicPersona = (p: Row) => ({

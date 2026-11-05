@@ -77,6 +77,28 @@ export function drawFun(ctx, x, y, prop, seed, t, reduced, size) {
 }
 const sameActivity = (a, b) => a?.prop === b?.prop && a?.label === b?.label;
 
+// ---------- renovation (new dwelling art being drawn; home.renovation from the server) ----------
+/** { state, pct, ahead, leftMs, etaMs } with progress extrapolated locally between server updates; null if none. */
+export function renovationNow(home, now = Date.now()) {
+  const r = home?.renovation;
+  if (!r) return null;
+  r.at ??= now; // when we got it: elapsed keeps counting locally
+  const eta = r.eta_ms || 150_000;
+  if (r.state === "building") {
+    const el = (r.elapsed_ms ?? 0) + (now - r.at);
+    return { state: r.state, pct: Math.min(95, Math.max(1, Math.round((el / eta) * 100))), leftMs: Math.max(10_000, eta - el), etaMs: eta };
+  }
+  if (r.state === "done" && (r.ago_ms ?? 0) + (now - r.at) > 30 * 60_000) return null;
+  return { state: r.state, ahead: r.ahead ?? null, etaMs: eta };
+}
+export function renovationLabel(home) {
+  const r = renovationNow(home);
+  if (!r) return "";
+  if (r.state === "building") return tr("reno.building", { pct: r.pct });
+  if (r.state === "done") return tr("reno.done");
+  return r.ahead ? tr("reno.queuedAhead", { n: r.ahead }) : tr("reno.queued");
+}
+
 // ---------- seasons (a few touches follow the calendar) ----------
 export function season(d = new Date()) {
   const m = d.getMonth(), day = d.getDate();

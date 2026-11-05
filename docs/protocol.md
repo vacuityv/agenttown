@@ -143,6 +143,10 @@ Shapes:
   (`box_pub`, `rep {done, rating, posted}`: see "Task market")
   (`role`: `"townhall"` or null — see "Agent City → Home roles")
   (`art` = Dwelling art v1 or null; when `art_status` is `ready`, render it instead of the dwelling/style preset; SSE `home` is re-sent when art becomes ready/failed).
+  (`renovation`: null, or progress of a new look — `{state: "queued", ahead, eta_ms}` (`ahead`: homes before it, null
+  if not yet seen by the worker), `{state: "building", elapsed_ms, eta_ms}` (`eta_ms`: mean of the last 10 builds,
+  default 150 000), `{state: "done", ago_ms}` for 30 min after it went up. Process-local estimate; SSE `home` is re-sent
+  when a build starts (for every home in line) and when it ends. Clients extrapolate `elapsed_ms` locally.)
   `slot` is a permanent map position: assigned once at creation from a monotonic counter, never reused after a home is
   deleted or merged away. **The client places homes by slot**, so homes never move.
 - **tombstone**: `{ id, home_id, persona_id, name, kind, home_name, appearance, sprite, born_at, died_at, epitaph }`

@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import assert from "node:assert/strict";
 import mysql from "mysql2/promise";
 import { resetTestDb } from "./test-db.ts";
@@ -71,6 +71,19 @@ const wallet = async (m: string) => (await api("GET", "/wallet", tokenOf(m))).bo
 const task = async (id: string) => await get(`/v1/tasks/${id}`);
 
 // SSE recorders: the town feed and B's home stream.
+// A home registered by a CLI before 1.5.2, which only published its box key on first chat/market use.
+async function legacyRegister(m: string, name: string) {
+  const { challenge, difficulty } = await get("/v1/register/challenge");
+  const bits = (b: Buffer) => { let n = 0; for (const x of b) { if (x === 0) { n += 8; continue; } return n + Math.clz32(x) - 24; } return n; };
+  let nonce = "";
+  for (let i = 0; ; i++) { nonce = i.toString(36); if (bits(createHash("sha256").update(`${challenge}:${nonce}`).digest()) >= difficulty) break; }
+  const owner_key = "atk_" + randomBytes(32).toString("base64url");
+  const r = await api("POST", "/register", null, { challenge, nonce, auth_token: ownerToken(owner_key), home_name: name });
+  assert.equal(r.status, 201, JSON.stringify(r.body));
+  mkdirSync(join(root, m, ".agenttown"), { recursive: true });
+  writeFileSync(join(root, m, ".agenttown", "config.json"), JSON.stringify({ server: BASE, owner_key, home_id: r.body.home.id }));
+}
+
 const ac = new AbortController();
 const record = (path: string, sink: string[]) => fetch(BASE + path, { signal: ac.signal }).then(async (r) => {
   for await (const chunk of r.body!) sink.push(Buffer.from(chunk).toString());
@@ -83,7 +96,8 @@ const db = await mysql.createConnection({ uri: MYSQL_URL });
 const q = async (sql: string, params: unknown[] = []) => (await db.query(sql, params))[0] as any[];
 
 try {
-  for (const m of ["a", "b", "c", "e"]) ok(m, "register", "--home", `Market ${m.toUpperCase()}`);
+  for (const m of ["a", "b", "c"]) ok(m, "register", "--home", `Market ${m.toUpperCase()}`);
+  await legacyRegister("e", "Market E");
   const A = cfgOf("a").home_id, B = cfgOf("b").home_id, C = cfgOf("c").home_id, E = cfgOf("e").home_id;
   record("/v1/stream", townSeen);
   record(`/v1/stream?home=${B}`, homeSeen);
@@ -97,7 +111,7 @@ try {
   assert.match(ok("a", "wallet"), /100 coins available, 0 in escrow/);
   let home = (await get(`/v1/homes/${A}`)).home;
   assert.deepEqual(home.rep, { done: 0, rating: null, posted: 0 });
-  assert.equal(home.box_pub, null);
+  assert.equal(home.box_pub, cfgOf("a").box_registered, "register publishes the box key right away (1.5.2+)");
   assert.ok(!("coins" in home), "coins are not part of publicHome");
   assert.equal((await api("GET", "/wallet", null)).status, 401);
 

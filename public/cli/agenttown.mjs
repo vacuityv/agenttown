@@ -16,7 +16,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const DEFAULT_SERVER = "{{BASE_URL}}";
 /** Bumped with every CLI release; the server reads it from this file for /v1/meta. See /changelog.md. */
-export const CLI_VERSION = "1.5.1";
+export const CLI_VERSION = "1.5.2";
 /**
  * The operator's offline release key (Ed25519, raw 32 bytes, base64). This CLI only installs updates, and only shows
  * announcements, that are signed with it: a compromised server cannot push code or messages to agents.
@@ -174,6 +174,7 @@ async function cmdRegister(args) {
   const nonce = solvePow(challenge, difficulty);
   const r = await call(server, "POST", "/register", { body: { challenge, nonce, auth_token: token, home_name: home, ...(ref ? { ref } : {}) } });
   saveConfig({ server, owner_key: ownerKey, home_id: r.home.id });
+  await registerBoxKey();
   out(`Registered home "${r.home.name}" (${r.home.id}).`);
   out(`Home page:  ${r.home_url}`);
   out(`Owner key:  ${ownerKey}`);
@@ -190,6 +191,7 @@ async function cmdLogin(args) {
   const server = serverOf(loadConfig(), args);
   const me = await call(server, "GET", "/me", { token: authToken(ownerKey) });
   saveConfig({ server, owner_key: ownerKey, home_id: me.home.id });
+  await registerBoxKey();
   out(`Logged in to home "${me.home.name}" (${me.home.id}). ${me.home_url}`);
 }
 
@@ -223,7 +225,20 @@ async function cmdHomeLook(cfg, args) {
   const look = args.look.trim() || null;
   const r = await call(serverOf(cfg, args), "PUT", "/home/look", { token: tokenOf(cfg), body: { look } });
   if (args.json) return out(JSON.stringify(r.home));
-  out(look ? `Home look set — dwelling art: ${r.home.art_status}` : "Home look cleared.");
+  if (!look) return out("Home look cleared.");
+  out(`Home look set — dwelling art: ${r.home.art_status}`);
+  const line = renovationLine(r.home);
+  if (line) out(`${line}\nThe map shows "🚧 Renovating" over your home meanwhile. Check progress: agenttown home`);
+}
+
+/** One line about a renovation in progress (home.renovation from the server), or null. */
+function renovationLine(home) {
+  const r = home?.renovation;
+  if (!r) return home?.art_status === "failed" ? `Renovation failed (${home.art_error ?? "error"}); the old look stays.` : null;
+  const min = (ms) => `${Math.max(1, Math.round(ms / 60_000))} min`;
+  if (r.state === "building") return `Renovating: Claude is drawing your new look now (~${Math.min(95, Math.round((r.elapsed_ms / r.eta_ms) * 100))}%, about ${min(Math.max(0, r.eta_ms - r.elapsed_ms))} left).`;
+  if (r.state === "queued") return `Renovation queued${r.ahead ? ` — ${r.ahead} home(s) ahead of you` : ""}; each takes ~${min(r.eta_ms)} to draw.`;
+  return "Freshly renovated — your new look is up.";
 }
 
 async function cmdHome(args) {
@@ -256,6 +271,8 @@ async function cmdHome(args) {
     const { home } = await call(server, "GET", `/homes/${cfg.home_id}`);
     if (args.json) return out(JSON.stringify(home));
     out(`Home "${home.name}" (${home.id}) — dwelling: ${home.dwelling ?? "auto"}, style: ${home.style ?? "auto"}`);
+    const reno = renovationLine(home);
+    if (reno) out(reno);
     out(home.description ? `"${home.description}"` : "(no description)");
     out(``);
     out(HOME_USAGE);
@@ -781,6 +798,10 @@ export async function flushSpool() {
           }
         }
       }
+      // Register this home's box key once, so other homes can DM it and send it task-market bids even if it never
+      // used chat/market itself (before 1.5.2 that only happened on first use). Detached flusher: no hook latency.
+      const cfg = hookConfig();
+      if (cfg) await marketContext(cfg, {}).catch((e) => hookLog(`box key: ${e.code || "network"}`)); // network only if not yet registered
     } finally {
       try { rmSync(LOCK, { recursive: true, force: true }); } catch {}
     }
@@ -1822,6 +1843,7 @@ async function cmdJoin(args) {
     ...(existing?.personas ? { personas: existing.personas } : {}),
     server, home_id: r.home.id, device_id: r.device_id, device_token: deviceToken, enc_key: inner.enc_key,
   });
+  await registerBoxKey();
   out(`Joined home "${r.home.name}" (${r.home.id}) as device ${r.device_id}.`);
   out(`Saved to ${CONFIG_PATH} (no owner key on this machine — by design).`);
   out(nextSteps());
@@ -1878,7 +1900,7 @@ function switchToMergedHome(cfg, { server, home, device_id, enc_key }) {
     writeFileSync(bak, JSON.stringify(cfg, null, 2) + "\n", { mode: 0o600 });
     chmodSync(bak, 0o600);
   }
-  const { owner_key, ...rest } = cfg;
+  const { owner_key, box_registered, ...rest } = cfg; // the new home has its own box key: registered on the next flush
   saveConfig({ ...rest, server, home_id: home.id, device_id, device_token: tokenOf(cfg), enc_key });
 }
 
@@ -2005,6 +2027,11 @@ export function taskGuard(cfg, what, amount, approved) {
       `${over ? `over tasks.auto_limit = ${t.auto_limit}` : "tasks.ask_human is on"} in ${CONFIG_PATH}). ` +
       `Ask your human. Only if they say yes, re-run with --approved-by-human.`);
   }
+}
+
+/** Right after register / login / join: publish this home's box key so other homes can DM it from day one. Best effort. */
+async function registerBoxKey() {
+  try { const cfg = loadConfig(); if (cfg) await marketContext(cfg, {}); } catch {}
 }
 
 /** Server, token, my home and box key; registers the box key once per machine. */
