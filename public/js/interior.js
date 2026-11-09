@@ -903,10 +903,23 @@ export class HomeSim {
     for (const o of this.ents.values()) if (o.id !== entId && o.target?.kind === "bed" && o.target.bedIdx != null) used.add(o.target.bedIdx);
     let idx = -1;
     for (let i = 0; i < beds.length; i++) if (!used.has(i)) { idx = i; break; }
-    let extra = 0;
-    if (idx < 0) { idx = this.personaIndex(pid) % beds.length; extra = 1; }
+    if (idx < 0) {
+      // Every bed taken: share the least crowded one, fanning sharers out left/right so they don't stack
+      // (a generated dwelling often has a single bed point, so several residents end up on it).
+      const load = beds.map(() => 0);
+      const slots = beds.map(() => new Set());
+      for (const o of this.ents.values()) if (o.id !== entId && o.target?.kind === "bed" && o.target.bedIdx != null) { load[o.target.bedIdx]++; slots[o.target.bedIdx].add(o.target.share ?? 0); }
+      idx = load.indexOf(Math.min(...load));
+      let n = 1; while (slots[idx].has(n)) n++;
+      return this.sharedBed(beds[idx], idx, n);
+    }
     const b = beds[idx];
-    return { kind: "bed", pose: "sleep", x: b.x + 5 + extra * 2, y: b.y + 9, bed: b, bedIdx: idx };
+    return { kind: "bed", pose: "sleep", x: b.x + 5, y: b.y + 9, bed: b, bedIdx: idx, share: 0 };
+  }
+  // n-th extra sleeper on a bed: alternate right/left of the pillow, a little lower each ring, so faces stay visible.
+  sharedBed(b, idx, n) {
+    const ring = Math.ceil(n / 2), side = n % 2 ? 1 : -1;
+    return { kind: "bed", pose: "sleep", x: b.x + 5 + side * ring * 7, y: b.y + 9, bed: b, bedIdx: idx, share: n, dy: ring * 2 };
   }
   deskSpot(e) {
     const d = this.deskOf.get(e.id) ?? 0;
@@ -1082,15 +1095,16 @@ export class HomeSim {
     const anchors = [];
     for (const e of this.ents.values()) {
       const persona = this.personas.get(e.a.persona_id) ?? { id: e.a.persona_id, kind: "other" };
-      const bed = e.pose === "sleep" ? e.target?.bed : null;
+      const bed0 = e.pose === "sleep" ? e.target?.bed : null;
+      const bed = bed0 && e.target.dy ? { ...bed0, y: bed0.y + e.target.dy } : bed0;
       const y = bed ? bed.y + 6.9 : e.pose === "seat" ? e.y - 0.5 : e.y;
       items.push({ y, draw: () => {
         const top = this.drawResident(ctx, e, persona, X0, Y0, s, t, now, reduced, bed);
         if (e.target?.activity && !e.path.length && e.pose === e.target.pose && !e.dying) this.drawPastime(ctx, e, X0, Y0, s, t, reduced);
-        if (bed && !plan.art) {
-          const bi = plan.beds.indexOf(bed);
+        if (bed0 && !plan.art && !e.target.share) { // sharers lie beside the bed, only its owner is tucked in
+          const bi = plan.beds.indexOf(bed0);
           // Tuck in from the chest down so the face stays visible on the pillow.
-          ctx.drawImage(blanketImg(plan.style.blankets[bi % 4], plan.kind), P(X0 + (bed.x + 1) * s), P(Y0 + (bed.y + 14) * s), P(9 * s), P(15 * s));
+          ctx.drawImage(blanketImg(plan.style.blankets[bi % 4], plan.kind), P(X0 + (bed0.x + 1) * s), P(Y0 + (bed0.y + 14) * s), P(9 * s), P(15 * s));
         }
         if (top != null) anchors.push({ ent: e, persona, x: X0 + e.x * s, y: top });
       } });
