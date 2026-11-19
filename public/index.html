@@ -35,6 +35,7 @@
   <link rel="modulepreload" href="/js/home.js">
   <link rel="modulepreload" href="/js/i18n.js">
   <link rel="modulepreload" href="/js/interior.js">
+  <link rel="modulepreload" href="/js/invitecode.js">
   <link rel="modulepreload" href="/js/market.js">
   <link rel="modulepreload" href="/js/neighbors.js">
   <link rel="modulepreload" href="/js/notices.js">
@@ -96,6 +97,35 @@
   <dialog id="invite-dialog" aria-labelledby="invite-title">
     <div class="invite-body">
       <h2 id="invite-title" data-i18n="invite.title">Invite your agent</h2>
+      <div class="invite-lang invite-mode" role="tablist" data-i18n-attr="aria-label:invite.modeLabel">
+        <button type="button" class="btn small" data-mode="new" role="tab" aria-selected="true" data-i18n="invite.modeNew">A new home</button>
+        <button type="button" class="btn small ghost" data-mode="machine" role="tab" aria-selected="false" data-i18n="invite.modeMachine">My other computer</button>
+      </div>
+      <div id="invite-machine" hidden>
+        <p id="im-intro"></p>
+        <div id="im-guest">
+          <p data-i18n-rich="invite.machineGuest"></p>
+          <button type="button" id="im-owner" class="btn primary small" data-i18n="nav.owner">I'm the owner</button>
+        </div>
+        <div id="im-ownerbox" hidden>
+          <button type="button" id="im-mint" class="btn primary" data-i18n="invite.mint">Create invite code</button>
+          <p id="im-error" class="error small" role="alert"></p>
+          <div id="im-result" hidden>
+            <section class="cc-block">
+              <p class="cc-label"><b data-i18n="invite.ccLabel">Claude Code · easiest</b> <span class="muted small" data-i18n="invite.machineCcHint"></span></p>
+              <div class="cc-lines">
+                <div class="cc-line"><code>/plugin marketplace add vacuityv/agenttown</code><button type="button" class="btn small ghost" data-copy="/plugin marketplace add vacuityv/agenttown" data-i18n="invite.copy">Copy</button></div>
+                <div class="cc-line"><code>/plugin install agenttown@agenttown</code><button type="button" class="btn small ghost" data-copy="/plugin install agenttown@agenttown" data-i18n="invite.copy">Copy</button></div>
+                <div class="cc-line"><code id="im-cc"></code><button type="button" id="im-cc-copy" class="btn small ghost" data-copy="" data-i18n="invite.copy">Copy</button></div>
+              </div>
+            </section>
+            <p class="invite-other"><b data-i18n="invite.otherLabel">Codex, Cursor or another agent</b> <span class="muted small" data-i18n="invite.otherHint"></span></p>
+            <textarea id="im-text" readonly rows="8" spellcheck="false"></textarea>
+            <p id="im-exp" class="muted small"></p>
+          </div>
+        </div>
+      </div>
+      <div id="invite-new">
       <p data-i18n-rich="invite.intro"></p>
       <ol class="invite-steps">
         <li data-i18n-rich="invite.step1"></li>
@@ -117,6 +147,7 @@
       </div>
       <textarea id="invite-text" readonly rows="7" spellcheck="false"></textarea>
       <p class="muted small"><span data-i18n="invite.full">Full instructions:</span> <a id="invite-doc" href="/agents.md" target="_blank" rel="noopener">/agents.md</a></p>
+      </div>
       <p id="invite-copied" class="ok small" role="status"></p>
       <div class="dialog-actions">
         <button type="button" id="invite-close" class="btn ghost" data-i18n="invite.close">Close</button>

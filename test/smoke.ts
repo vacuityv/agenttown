@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { createDecipheriv, createHmac } from "node:crypto";
 import assert from "node:assert/strict";
 import { resetTestDb } from "./test-db.ts";
+import { mintInvite } from "../public/js/invitecode.js";
 
 const PORT = 8797;
 const BASE = `http://localhost:${PORT}`;
@@ -36,6 +37,18 @@ try {
 
   // Another machine logs in with the same key.
   assert.match(cli("b", "login", cfg.owner_key), new RegExp(cfg.home_id));
+
+  // The website (owner mode) mints a device invite in the browser; the CLI must redeem it byte-for-byte.
+  const ownerAuth = createHmac("sha256", cfg.owner_key).update("agenttown/auth/v1").digest("hex");
+  const web = await mintInvite({
+    ownerKey: cfg.owner_key, homeId: cfg.home_id,
+    post: async (body: any) => { const r = await fetch(`${BASE}/v1/invites`, { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${ownerAuth}` }, body: JSON.stringify(body) }); assert.equal(r.status, 201); return r.json(); },
+  });
+  assert.match(web.code, /^AT-[0-9a-z]{8}-[0-9a-z]{26}$/);
+  assert.match(cli("w", "join", web.code), new RegExp(`Joined home "Smoke Home" \\(${cfg.home_id}\\)`));
+  const wcfg = JSON.parse(readFileSync(join(dir, "w", "config.json"), "utf8"));
+  assert.equal(wcfg.enc_key, createHmac("sha256", cfg.owner_key).update("agenttown/enc/v1").digest("base64url"));
+  assert.equal(wcfg.owner_key, undefined);
 
   // SSE listener.
   const seen: string[] = [];

@@ -308,7 +308,7 @@ dialog input {
 .invite-steps { margin: 0 0 12px; padding-left: 20px; font-size: 14px; }
 .invite-steps li { margin: 4px 0; }
 .invite-lang { display: flex; gap: 6px; margin: 8px 0; }
-#invite-text { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--mono); background: var(--bg2); color: inherit;
+#invite-text, #im-text { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--mono); background: var(--bg2); color: inherit;
   border: 2px solid var(--line); padding: 10px; resize: vertical; }
 #invite-dialog code { font-size: 12px; overflow-wrap: anywhere; }
 .ok { color: var(--accent); min-height: 1em; }
@@ -506,3 +506,4 @@ dialog input {
 .timeline li.talk-thread .talk-who { font-size: 12px; }
 .timeline li.talk-thread .talk-text { font-size: 12px; white-space: normal; }
 .timeline li.talk-thread .talk-line.reply { margin-left: 10px; padding-left: 8px; }
+#im-mint { margin: 4px 0 8px; } #im-guest .btn { margin-top: 4px; }

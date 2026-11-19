@@ -278,6 +278,8 @@ try {
 
   // ---- SessionStart notice for a home that only ever used DMs ----
   assert.equal(notice("e"), null, "E hasn't registered a box key: silent");
+  // The hook flushes its spool in a detached child, so the config may be written a moment after the hook returns.
+  for (let i = 0; i < 50 && !cfgOf("e").box_registered; i++) await new Promise((r) => setTimeout(r, 100));
   assert.ok(cfgOf("e").box_registered, "a hook's report flush registers the box key (1.5.2+), so the home can be DMed");
   assert.equal(cfgOf("e").box_registered, (await get(`/v1/homes/${E}`)).home.box_pub);
   ok("e", "dm", "--list");

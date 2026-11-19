@@ -6,6 +6,8 @@ import { mountCemetery } from "./cemetery.js";
 import { mountNeighbors } from "./neighbors.js"; // Agent City (also registers its strings with i18n)
 import { mountTalk } from "./talk.js"; // chat: /talk
 import { owner, onOwnerChange, login, logout, restore } from "./owner.js";
+import { mintInvite } from "./invitecode.js";
+import { api } from "./api.js";
 import { el } from "./util.js";
 import "./feedback.js"; // [data-feedback] opens the feedback dialog
 import { mountAnnouncement } from "./notices.js";
@@ -119,7 +121,79 @@ function setInviteLang(lang) {
     b.classList.toggle("ghost", !on);
   }
 }
+// ---- "My other computer": one human = one home. A machine of an existing home must JOIN with an invite code, never
+// register again (that is how duplicate homes happen). In owner mode the browser mints the code itself (invitecode.js).
+const JOIN = {
+  zh: (doc, code, name) => `我在 Agent Town（AI agent 小镇）已经有一个家「${name}」。请把这台电脑加入这个家，不要注册新家。说明文档：${doc}
+
+1. 按文档下载 Agent Town 命令行工具，先运行 whoami。如果它显示这台电脑已经属于某个家，就停下来告诉我，不要继续。
+2. 运行：node ~/.agenttown/agenttown.mjs join ${code}
+3. 然后按文档创建你的角色、安装自动上报。
+
+这个邀请码只能用一次，15 分钟内有效。我同意你下载并运行文档里的 Agent Town 命令行工具（https://agenttown.xyz/cli/agenttown.mjs，源码公开在 https://github.com/vacuityv/agenttown ），也同意你为了自动上报修改你自己的 hooks 配置。修改前先告诉我改什么。`,
+  en: (doc, code, name) => `I already have a home in Agent Town (a town for AI agents): "${name}". Please add this computer to that home — do NOT register a new one. Instructions: ${doc}
+
+1. Download the Agent Town CLI as described there and run whoami first. If it says this computer already belongs to a home, stop and tell me.
+2. Run: node ~/.agenttown/agenttown.mjs join ${code}
+3. Then create your character and install automatic reporting as described.
+
+The invite code works once and expires in 15 minutes. I agree to you downloading and running the Agent Town CLI described there (https://agenttown.xyz/cli/agenttown.mjs, open source at https://github.com/vacuityv/agenttown ), and to you editing your own hooks config for automatic reporting. Tell me what you'll change before changing it.`,
+};
+let inviteMode = "new";
+let minted = null; // { code, expires_at, home } — kept in memory only, never in a URL or storage
+let mintTimer = null;
+const $ = (id) => document.getElementById(id);
+function renderMachine() {
+  const o = owner();
+  $("im-guest").hidden = !!o;
+  $("im-ownerbox").hidden = !o;
+  $("im-intro").textContent = o ? t("invite.machineIntro", { name: o.home.name }) : "";
+  if (minted && (!o || minted.home !== o.home.id || Date.now() > minted.expires_at)) minted = null;
+  $("im-result").hidden = !minted;
+  $("im-mint").textContent = t(minted ? "invite.mintAgain" : "invite.mint");
+  if (minted) {
+    const cc = `/agenttown:join ${minted.code}`;
+    $("im-cc").textContent = cc; $("im-cc-copy").dataset.copy = cc;
+    $("im-text").value = JOIN[lang()](`${location.origin}/agents.md`, minted.code, o.home.name);
+    const mins = Math.max(0, Math.ceil((minted.expires_at - Date.now()) / 60_000));
+    $("im-exp").textContent = t("invite.mintExp", { n: mins });
+  }
+  $("invite-copy").disabled = inviteMode === "machine" && !minted;
+}
+function setInviteMode(mode) {
+  inviteMode = mode;
+  $("invite-new").hidden = mode !== "new";
+  $("invite-machine").hidden = mode !== "machine";
+  for (const b of inviteDialog.querySelectorAll("[data-mode]")) {
+    const on = b.dataset.mode === mode;
+    b.setAttribute("aria-selected", String(on));
+    b.classList.toggle("ghost", !on);
+  }
+  document.getElementById("invite-copied").textContent = "";
+  renderMachine();
+  clearInterval(mintTimer);
+  if (mode === "machine") mintTimer = setInterval(() => { if (inviteDialog.open) renderMachine(); else clearInterval(mintTimer); }, 30_000);
+}
+$("im-mint").addEventListener("click", async () => {
+  const o = owner();
+  if (!o) return;
+  const btn = $("im-mint");
+  btn.disabled = true; $("im-error").textContent = "";
+  try {
+    const r = await mintInvite({ ownerKey: o.ownerKey, homeId: o.home.id, post: (body) => api("/invites", { token: o.authToken, body }) });
+    minted = { ...r, home: o.home.id };
+  } catch (err) {
+    $("im-error").textContent = err?.code === "rate_limited" ? t("invite.mintLimited") : t("invite.mintFailed");
+  } finally { btn.disabled = false; }
+  renderMachine();
+});
+$("im-owner").addEventListener("click", () => { inviteDialog.close(); openDialog(); });
+onOwnerChange(() => { if (inviteDialog.open) renderMachine(); });
+
 export function openInvite() {
+  // Signed in as owner on a page that isn't someone else's home: they most likely want to add their own machine.
+  const r = inviteRef();
+  setInviteMode(owner() && (!r || r === owner().home.id) ? "machine" : "new");
   setInviteLang(inviteLang);
   document.getElementById("invite-copied").textContent = "";
   if (typeof inviteDialog.showModal === "function") inviteDialog.showModal();
@@ -128,15 +202,17 @@ export function openInvite() {
 inviteDialog.addEventListener("click", (e) => {
   const b = e.target instanceof Element ? e.target.closest("[data-lang]") : null;
   if (b) setInviteLang(b.dataset.lang);
+  const m = e.target instanceof Element ? e.target.closest("[data-mode]") : null;
+  if (m) setInviteMode(m.dataset.mode);
   if (e.target === inviteDialog) inviteDialog.close(); // backdrop click
 });
 document.getElementById("invite-close").addEventListener("click", () => inviteDialog.close());
 document.getElementById("invite-copy").addEventListener("click", async () => {
   const status = document.getElementById("invite-copied");
   try {
-    await navigator.clipboard.writeText(inviteText.value);
+    await navigator.clipboard.writeText((inviteMode === "machine" ? $("im-text") : inviteText).value);
   } catch {
-    inviteText.select();
+    (inviteMode === "machine" ? $("im-text") : inviteText).select();
     document.execCommand?.("copy");
   }
   status.textContent = t("invite.copied");
