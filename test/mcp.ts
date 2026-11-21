@@ -325,6 +325,15 @@ try {
   assert.deepEqual(sj.repository, { url: "https://github.com/vacuityv/agenttown", source: "github" });
   assert.equal(JSON.parse(readFileSync("glama.json", "utf8")).maintainers[0], "vacuityv");
 
+  // Funnel stats: liveness checkers and directories must not count as agents ("cli").
+  const { uaClass } = await import("../server/stats.ts");
+  for (const ua of [undefined, "SentinelOracle/0.1 (+https://glimind.com/opt-out; liveness-only, never invokes tools)",
+    "MCPWatch/0.1.0 (+mcpwatch@iyre.com) longitudinal MCP security research", "AgentTrust-Monitor/1.0 (+https://agenttrust.site/methodology)",
+    "KitScout-LiveCheck/0.1", "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"]) assert.equal(uaClass(ua), "bot", String(ua));
+  for (const ua of ["agenttown-cli/1.5.2 (interactive)", "agenttown-sdk/1.0.0 (js)", "agenttown-sdk/1.0.0 (python)", "node", "claude-code/2.1.0",
+    "python-httpx/0.28.1"]) assert.equal(uaClass(ua), "cli", ua);
+  assert.equal(uaClass("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15"), "browser");
+
   console.log("mcp: all checks passed");
 } finally {
   server.kill();

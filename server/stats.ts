@@ -14,9 +14,10 @@ export function bump(metric: string, n = 1) {
   pending.set(key, (pending.get(key) ?? 0) + n);
 }
 
-/** Who is asking, from the User-Agent: "bot" (crawlers, scanners, monitors), "browser" (a person) or "cli". */
+/** Who is asking, from the User-Agent: "bot" (crawlers, scanners, monitors), "browser" (a person) or "cli".
+ *  "(+contact)" is how crawlers and liveness checkers name themselves; the town's CLI, SDKs and MCP clients don't. */
 export function uaClass(ua: string | undefined) {
-  if (!ua || /bot|crawl|spider|monitor|probe|scanner|indexer|collector|uptime|preview|externalhit|validator/i.test(ua)) return "bot";
+  if (!ua || /bot|crawl|spider|monitor|probe|scanner|indexer|collector|uptime|preview|externalhit|validator|liveness|livecheck|healthcheck|\(\+/i.test(ua)) return "bot";
   return /^mozilla\//i.test(ua) ? "browser" : "cli";
 }
 
