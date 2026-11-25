@@ -383,6 +383,9 @@ async function releaseChecks(cfg: any) {
   assert.match(upLocal.stderr, /local development server/);
 
   // ---- announcements ----
+  // An unread inbox adds its own SessionStart line (counts only); clear it first so only the announcement is checked.
+  // (From a different machine of the same home, so a1's cached /v1/meta stays unfetched.)
+  assert.equal(run(machine("a0", { auto_update: false }), ["inbox", "--mark-read"]).status, 0);
   const post = (body: object) => fetch(`${B}/v1/admin/announcement`, {
     method: "POST", headers: { authorization: `Bearer ${ADMIN}`, "content-type": "application/json" }, body: JSON.stringify(body),
   });
